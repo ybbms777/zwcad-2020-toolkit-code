@@ -289,54 +289,50 @@
           (princ (strcat "\n      内边框 = " (tk:num (car i)) " x " (tk:num (cadr i))))
           (list mn mx))))))
 
-;; ---------- [3/5] 框选遮挡物 -> 最大可用矩形 ----------
-;; ---------- [3/5] 可用区：手动点两点 或 框选遮挡物自动算 ----------
-;; 返回值必须是 (宽 高 中心点) —— tk:confirm / tk:apply 要这个，
-;; 不能直接返回矩形 ((左下) (右上))，否则 tk:num 收到「点」会报类型不正确。
-(defun tk:usable (inner / p1 p2 mn mx ss obs raw u i n w)
-  (setq p1 (getpoint "\n[3/5] 点【可用区】第一个角点（回车=改为框选图框内遮挡物自动算）: "))
-  (if p1
+;; ---------- [3/5] 可用区：圈出遮挡物（点两个对角点，可圈多块） ----------
+;; 不用 ssget：整个图框常常是一个块，里面的标题栏/变更表根本选不上
+;; （选到的永远是整个图框块，裁进内框就把内框全盖住，等于没减）。
+;; 改成让用户直接圈区域，块 / 锁定图层 / 外部参照都不影响。
+(defun tk:usable (inner / p1 p2 mn mx obs obs2 u i n done)
+  (princ "\n[3/5] 圈出【图框内遮挡物】（标题栏、变更记录表等）")
+  (princ "\n      点遮挡物的两个对角点；可以圈多块；没有遮挡物就直接回车")
+  (setq obs nil n 0 done nil)
+  (while (not done)
+    (setq p1 (getpoint (if (= n 0)
+                         "\n      点第 1 块遮挡物的第一个角点（回车=没有遮挡物）: "
+                         "\n      继续圈下一块（回车=圈完）: ")))
+    (if (null p1)
+      (setq done T)
+      (progn
+        (setq p2 (getcorner p1 "\n      点对角: "))
+        (if (null p2)
+          (setq done T)
+          (progn
+            (setq p1 (tk:u2w p1) p2 (tk:u2w p2))
+            (setq mn (list (min (car p1) (car p2)) (min (cadr p1) (cadr p2)) 0.0))
+            (setq mx (list (max (car p1) (car p2)) (max (cadr p1) (cadr p2)) 0.0))
+            (setq obs (cons (list mn mx) obs))
+            (setq n (1+ n))
+            (princ (strcat "\n      已圈第 " (itoa n) " 块（继续圈，或回车结束）")))))))
+  ;; 裁进内框：遮挡物在内框外面时，不裁会算出跑到框外的可用区
+  (setq obs2 nil)
+  (foreach r obs
+    (if (tk:clip r inner) (setq obs2 (cons (tk:clip r inner) obs2))))
+  (setq obs obs2)
+  (if (> n 0)
+    (princ (strcat "\n      圈了 " (itoa n) " 块，落在内边框里的有 " (itoa (length obs)) " 块")))
+  (if obs
+    (setq u (tk:maxrect inner obs))
     (progn
-      (setq p2 (getcorner p1 "\n      点对角: "))
-      (if (null p2)
-        nil
-        (progn
-          (setq p1 (tk:u2w p1) p2 (tk:u2w p2))
-          (setq mn (list (min (car p1) (car p2)) (min (cadr p1) (cadr p2)) 0.0))
-          (setq mx (list (max (car p1) (car p2)) (max (cadr p1) (cadr p2)) 0.0))
-          (setq u (list mn mx))
-          (princ "\n      可用区 = 手动指定"))))
+      (princ "\n      无遮挡物，可用区 = 内边框")
+      (setq u inner)))
+  ;; 兜底：可用区必须完全在内边框里
+  (if (or (null u)
+          (< (tk:rx1 u) (tk:rx1 inner)) (< (tk:ry1 u) (tk:ry1 inner))
+          (> (tk:rx2 u) (tk:rx2 inner)) (> (tk:ry2 u) (tk:ry2 inner)))
     (progn
-      (princ "\n      框选【图框内的遮挡物】（标题栏、变更记录表等），没有就回车跳过: ")
-      (setq ss (ssget))
-      (tk:clear-sel)
-      (setq obs nil n 0 w 0)
-      (if ss
-        (progn
-          (setq raw (vl-catch-all-apply 'tk:allbox (list ss)))
-          (if (vl-catch-all-error-p raw) (setq raw nil))
-          (if raw
-            (foreach r (tk:merge-rects raw)
-              ;; 先裁进内框：遮挡物在内框外面时，不裁会算出跑到框外的可用区
-              (setq w (1+ w))
-              (if (tk:clip r inner)
-                (progn (setq obs (cons (tk:clip r inner) obs)) (setq n (1+ n))))))
-          (princ (strcat "\n      框选到 " (itoa w) " 块，落在内边框里的有 " (itoa n) " 块"))
-          (if (= n 0)
-            (princ "\n      提示：选到的对象全在内边框外面。若对象选不上（锁定图层/外部参照），改用第 3 步「直接点两点」的方式")))
-        (princ "\n      没选到对象。若对象选不上（锁定图层/外部参照），改用第 3 步「直接点两点」的方式"))
-      (if obs
-        (setq u (tk:maxrect inner obs))
-        (progn
-          (princ "\n      无遮挡物，可用区 = 内边框")
-          (setq u inner)))
-      ;; 兜底：可用区必须完全在内边框里
-      (if (or (null u)
-              (< (tk:rx1 u) (tk:rx1 inner)) (< (tk:ry1 u) (tk:ry1 inner))
-              (> (tk:rx2 u) (tk:rx2 inner)) (> (tk:ry2 u) (tk:ry2 inner)))
-        (progn
-          (princ "\n      警告：可用区算出异常，已回退为整个内边框")
-          (setq u inner)))))
+      (princ "\n      警告：可用区算出异常，已回退为整个内边框")
+      (setq u inner)))
   (if (null u)
     nil
     (progn
@@ -424,7 +420,9 @@
   info)
 
 (defun tk:part (/ pL)
-  (setq pL (tk:getpt "\n[4/5] 点【零件最左】位置（关捕捉，用准星；回车=改为框选零件自动量）: "))
+  ;; 只保留一个「最左」提示：原来提示出现两次，用户会以为第一次点击没被记录
+  (princ "\n[4/5] 依次点零件的最左 / 最右 / 最下 / 最上 四个位置（关捕捉，用准星）")
+  (setq pL (tk:getpt "\n      点【零件最左】位置（回车=改为框选零件自动量）: "))
   (if (null pL) (tk:part-select) (tk:part-points pL)))
 
 ;; ---------- [5/5] 尺寸 -> 余量 -> 预览确认 ----------

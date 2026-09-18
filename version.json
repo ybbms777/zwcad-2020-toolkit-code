@@ -1,20 +1,19 @@
 {
-  "version": "1.2.14",
-  "date": "2026-09-18 16:01",
+  "version": "1.2.15",
+  "date": "2026-09-18 16:08",
   "fontVersion": "2026.09.18",
   "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "修复坐标系混用：getpoint/getcorner 返回 UCS，而 vla-getboundingbox 返回 WCS。内部混着用导致辅助框画到很远的地方、内边框尺寸算错、遮挡物被误判到框外",
-    "现在内部一律用 WCS：取点后先转 WCS 再算，传给 command 前再转回 UCS",
-    "TK 第 3 步增加提示：框选到 N 块、其中落在内边框里的有 M 块；全在框外时给出明确提示",
-    "无遮挡物时不再误报「可用区算出异常」"
+    "修复对象捕捉被永久关闭：tk:getpt 里恢复 OSMODE 的语句写在 getpoint 之后，中途按 Esc 时执行不到，导致整个 CAD 会话的对象捕捉一直是关的",
+    "现在命令开始时保存 OSMODE / CMDECHO 原值，正常结束和出错（错误处理函数）都会恢复",
+    "如果你已经中招（捕捉没了）：命令行执行 (setvar \"OSMODE\" 4133) 回车，或按 F3 重新打开对象捕捉"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "d3da427a22ee461a773b68235105d0ab07cc098e10252988962cf3c649a8f924",
+    "CHANGELOG.md": "0409cd51a8431beeb05a2cb927f1bc729589ce7e9e463ddda19bb30d16cdb518",
     "README.md": "1149b3d07c44cc625acac7ce1905a695512d7e5aebec56b63d835ad6a13d3e4c",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "a64315bd5881c6ba3e5ea02324b66f1c48aab201326fb703aa0fd0a5fe08c1d7",
@@ -27,7 +26,7 @@
     "modules/dimline.lsp": "6a2f20fd45ca52637fc2c3a87018e3d4c9ddd3a65563a2da920281c8b8b835f1",
     "modules/extend.lsp": "4ef64e61ee90e7f017ab62d8a391e40a0a1d90ae4e929f9ba1d5bb0d35007e5a",
     "modules/font.lsp": "c1f0ad769ffb048502c67dabd6eeb74e55f8f193e8f3ecc7387a8fd2bce40f6d",
-    "modules/frame.lsp": "cfd6186629a6071ca52b307237c79ab0d2cdb57d8512bc17a0af86f6da73f2a9",
+    "modules/frame.lsp": "c4fde68a8fd69ac81f4a84f47179c602605b9f6d318cee5b1b2c887af065ae26",
     "modules/symbols.lsp": "c57b9bcab8f3121bfa14879a32d417466d7903685ed3f8776851dba8f561dc0c",
     "modules/tolerance.lsp": "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
     "modules/trim.lsp": "8fbfb20c587da172766bce4c74507ec0819a49972166822ee1c2b2c1118b7320",

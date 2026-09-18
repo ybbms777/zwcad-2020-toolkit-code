@@ -13,6 +13,16 @@
 
 (setq tk:boxents nil)
 (setq tk:mL 0.0 tk:mR 0.0 tk:mB 0.0 tk:mT 0.0)
+;; 命令开始时保存的系统变量原值，出错或结束时一定恢复
+(setq tk:os0 nil tk:ce0 nil)
+
+(defun tk:save-vars ()
+  (setq tk:os0 (getvar "OSMODE") tk:ce0 (getvar "CMDECHO")))
+
+(defun tk:restore-vars ()
+  (if tk:os0 (vl-catch-all-apply 'setvar (list "OSMODE" tk:os0)))
+  (if tk:ce0 (vl-catch-all-apply 'setvar (list "CMDECHO" tk:ce0)))
+  (setq tk:os0 nil tk:ce0 nil))
 
 ;; ---------- 坐标系：内部一律用 WCS ----------
 ;; vla-getboundingbox 返回 WCS，而 getpoint / getcorner 返回 UCS，command 又按 UCS 解释点。
@@ -87,11 +97,12 @@
 (defun tk:clear-sel () (vl-catch-all-apply 'sssetfirst (list nil nil)))
 
 ;; ---------- 取点：临时关掉对象捕捉，用准星原始位置；返回 WCS ----------
-(defun tk:getpt (msg / os p)
-  (setq os (getvar "OSMODE"))
+;; 恢复用命令开始时保存的 tk:os0，不是就地读——否则中途按 Esc 会让 OSMODE 永远停在 0，
+;; 整个 CAD 会话都没有捕捉了（踩过这个坑）。Esc 时由 *error* 兜底恢复。
+(defun tk:getpt (msg / p)
   (setvar "OSMODE" 0)
   (setq p (getpoint msg))
-  (setvar "OSMODE" os)
+  (setvar "OSMODE" (if tk:os0 tk:os0 4133))
   (if p (tk:u2w p) nil))
 
 ;; ---------- 辅助显示：洋红实体（用完删除） ----------
@@ -471,11 +482,14 @@
 (defun tk:run (/ fr ss bb inner u p s)
   (defun *error* (msg)
     (vl-catch-all-apply 'tk:erase-box nil)
+    ;; 中途 Esc / 出错时把 OSMODE、CMDECHO 还原，否则会永久停在 0
+    (tk:restore-vars)
     (if msg
       (if (not (wcmatch (strcase (vl-princ-to-string msg))
                         "*CANCEL*,*QUIT*,*BREAK*,*取消*,*退出*"))
         (princ (strcat "\n提示：" (vl-princ-to-string msg)))))
     (princ))
+  (tk:save-vars)
   (princ "\n")
   (princ "\n  ================= 标题框缩放 =================")
   (princ "\n  [1] 选图框  [2] 点内边框  [3] 框选遮挡物")
@@ -490,6 +504,7 @@
            (setq s (tk:confirm u p)))
     (tk:apply ss u p s)
     (progn (tk:erase-box) (princ "\n已取消，未做任何修改。")))
+  (tk:restore-vars)
   (princ))
 
 (defun c:TK () (tk:run))

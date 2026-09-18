@@ -1,18 +1,18 @@
 {
-  "version": "1.2.2",
-  "date": "2026-09-18 12:09",
+  "version": "1.2.3",
+  "date": "2026-09-18 12:11",
   "fontVersion": "2026.09.18",
-  "fontsHash": "e4d4dc0bce7b9f946600cc85a93f50ccd72ee3850c690ed3d715fff3368365e6",
+  "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "发布器（发布.cmd / publish.ps1）不再随包分发：从更新清单、公开仓库、完整包中移除，只保留在作者本机",
-    "发布器新增发布权限校验：必须存在作者本机的发布用 SSH 密钥才能运行，其他人拿到也跑不起来"
+    "修复字体指纹算法：改用与文件顺序无关的 XOR 累加，避免不同工具算出的指纹不一致导致每次发布都误判\"字体有变化\"",
+    "修复 version.json 里 CHANGELOG.md 的哈希陈旧问题（先追加更新说明、再计算指纹）"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "b726d37b59f783857cef25391f3d38bebbbec8bcd98a6f5d72ee796aef685b43",
+    "CHANGELOG.md": "d4d290308003a8da4d876069bd7ac0cf523dae3376e34fc0c81f1e7dce331460",
     "README.md": "4b414daa6b91e0a7de54ca4530c430026955da625079fbc63af9c0de4378988a",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "ad3363d8c0572584d832f83c21271c8500048bc839ae443bc7ef7d6a10ef6679",

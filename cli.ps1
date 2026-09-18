@@ -35,6 +35,17 @@ function Pad-Visual([string]$s,[int]$width) {
     if($pad -lt 0){$pad=0}
     $s+(' '*$pad)
 }
+# 版本号从 version.json 读，别再写死在标题框里（发布时会自动更新）
+function Get-KitVersion {
+    $p=Join-Path $PSScriptRoot 'version.json'
+    if(Test-Path -LiteralPath $p){
+        try{
+            $v=(Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json)
+            if($v.version){ return [string]$v.version }
+        }catch{}
+    }
+    return '1.2'
+}
 $allModules=@('dimensions','trim','extend','tolerance','symbols','font','dimline')
 # Weights are cosmetic only -- they shape how long the progress bar runs,
 # not the actual (near-instant) install work.
@@ -138,7 +149,7 @@ function Show-Menu {
     Write-Host ''
     Write-Host ('   +'+('-'*$boxWidth)+'+') -ForegroundColor Cyan
     Write-Host ('   |'+(Center-Text '中望 CAD 2020  插件安装中心' $boxWidth)+'|') -ForegroundColor Cyan
-    Write-Host ('   |'+(Center-Text 'v1.2' $boxWidth)+'|') -ForegroundColor DarkCyan
+    Write-Host ('   |'+(Center-Text ('v'+(Get-KitVersion)) $boxWidth)+'|') -ForegroundColor DarkCyan
     Write-Host ('   +'+('-'*$boxWidth)+'+') -ForegroundColor Cyan
     Write-Host ''
     Write-Host '   标注与绘图' -ForegroundColor White

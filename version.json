@@ -1,21 +1,21 @@
 {
-  "version": "1.2.4",
-  "date": "2026-09-18 12:17",
+  "version": "1.2.5",
+  "date": "2026-09-18 13:36",
   "fontVersion": "2026.09.18",
   "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "修复完整包内容：不再包含 selection.lsp（模块勾选属于本机配置，安装时会重新生成，不该随包分发）"
+    "CLI 标题框的版本号改为从 version.json 动态读取，不再写死 v1.2，以后发布自动跟随最新版本"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "531c769299c9513fbe44be85e9b9edd03ef9f9d1f44b57d1e9a31330165a8e6d",
+    "CHANGELOG.md": "69c68a8c26fe8eb785a9b0342b990357b182be4a80cf1abdabc5a8083bee402c",
     "README.md": "4b414daa6b91e0a7de54ca4530c430026955da625079fbc63af9c0de4378988a",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "ad3363d8c0572584d832f83c21271c8500048bc839ae443bc7ef7d6a10ef6679",
-    "cli.ps1": "83f8c39f72bd790e526a87bffb767c96b91fb2b57c35983c326913f1e9838204",
+    "cli.ps1": "6fa75c4742779637859c90edf6ed0464f7172cbabcf3c7625068eb0cf2a691f0",
     "install.ps1": "46d8d1d34bc6d008934aad9d19f44e7197fad40b05d07deb36ceb35f27d3a1b3",
     "modules.lsp": "f6cbff49627f1c2bf7cfb30cb7cf4764083954f885ee09cb90a8df7e31d16b11",
     "modules/click.lsp": "811dcaae914f26052968f1f29635c52607ec43d2f22e578af1d679ba204d5bf8",

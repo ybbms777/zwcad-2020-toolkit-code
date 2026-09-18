@@ -1,19 +1,20 @@
 {
-  "version": "1.2.15",
-  "date": "2026-09-18 16:08",
+  "version": "1.2.16",
+  "date": "2026-09-18 16:16",
   "fontVersion": "2026.09.18",
   "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "修复对象捕捉被永久关闭：tk:getpt 里恢复 OSMODE 的语句写在 getpoint 之后，中途按 Esc 时执行不到，导致整个 CAD 会话的对象捕捉一直是关的",
-    "现在命令开始时保存 OSMODE / CMDECHO 原值，正常结束和出错（错误处理函数）都会恢复",
-    "如果你已经中招（捕捉没了）：命令行执行 (setvar \"OSMODE\" 4133) 回车，或按 F3 重新打开对象捕捉"
+    "修复致命 bug：tk:usable 返回的是矩形，而下游 tk:confirm / tk:apply 要的是「宽 高 中心点」，导致第 5 步设完余量后报「类型不正确 - (x y 0.0)」直接中断",
+    "新增类型守卫：可用区 / 零件范围结构不对时给出明确提示，而不是抛晦涩的类型错误",
+    "TK 第 3 步新增「直接点两点手动指定可用区」：回车走遮挡物自动算，直接点两点则手动指定。遮挡物框选不上时（锁定图层 / 外部参照 / 和整个图框在同一个块里）用这个",
+    "TK 第 4 步输出改清楚：分别列出你点的 4 个位置，再列出合成后的包围盒，避免「左 X 和我点的最左点不一样」的困惑"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "0409cd51a8431beeb05a2cb927f1bc729589ce7e9e463ddda19bb30d16cdb518",
+    "CHANGELOG.md": "b0ba83142ce1fd009b91320eef178c1e96e2daba3371d1db5120209a13609bf2",
     "README.md": "1149b3d07c44cc625acac7ce1905a695512d7e5aebec56b63d835ad6a13d3e4c",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "a64315bd5881c6ba3e5ea02324b66f1c48aab201326fb703aa0fd0a5fe08c1d7",
@@ -26,7 +27,7 @@
     "modules/dimline.lsp": "6a2f20fd45ca52637fc2c3a87018e3d4c9ddd3a65563a2da920281c8b8b835f1",
     "modules/extend.lsp": "4ef64e61ee90e7f017ab62d8a391e40a0a1d90ae4e929f9ba1d5bb0d35007e5a",
     "modules/font.lsp": "c1f0ad769ffb048502c67dabd6eeb74e55f8f193e8f3ecc7387a8fd2bce40f6d",
-    "modules/frame.lsp": "c4fde68a8fd69ac81f4a84f47179c602605b9f6d318cee5b1b2c887af065ae26",
+    "modules/frame.lsp": "35d7b8966cefb14b4e83ec70dc2470c632a81556e567d4aab097ccbea31f8180",
     "modules/symbols.lsp": "c57b9bcab8f3121bfa14879a32d417466d7903685ed3f8776851dba8f561dc0c",
     "modules/tolerance.lsp": "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
     "modules/trim.lsp": "8fbfb20c587da172766bce4c74507ec0819a49972166822ee1c2b2c1118b7320",
@@ -35,7 +36,7 @@
     "src/build.ps1": "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
     "update.ps1": "957adee06b439d1064470f0694e464402419d57c16353586842bc2d7064b0fb3",
     "一键安装.cmd": "7779c1f386380627d542a076b81371c2c2d2ad7fe1fa7b41e33eef91bf30d917",
-    "使用说明.md": "7702a39e90a113af7414ef710fc68c357a0a7858d62e1c8b7a4d42579101c211",
+    "使用说明.md": "be45ba6d6a9ae0614b71301f119e11123746f484ab430f9e34c8df22b3aa1fdb",
     "取消自动加载.cmd": "3a638a469aa3b91d6f4280f7a7df784d96468a8a43be04936a10b0ee0892adef",
     "更新.cmd": "b9ab8d094902b6bf2f8c5f9fa5e12c4039e97e33da297f0577ffa818bae900e1"
   }

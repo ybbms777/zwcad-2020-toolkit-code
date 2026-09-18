@@ -92,6 +92,15 @@
 
 (defun tk:num (x) (rtos x 2 3))
 
+;; 守卫：这里要的是 (宽 高 中心点)，不是矩形 ((左下点) (右上点))。
+;; 传错的话 tk:num 会收到「点」，报「类型不正确 - (x y 0.0)」，很难定位。
+(defun tk:boxok (b what)
+  (if (and b (numberp (car b)) (numberp (cadr b)))
+    T
+    (progn
+      (princ (strcat "\n      内部错误：" what " 数据格式不对（应为 宽 高 中心点），已取消"))
+      nil)))
+
 ;; 每次 ssget 之后清掉选择集：否则对象一直处于选中（带夹点）状态，
 ;; 会干扰下一步的框选，用户也会看到整个图框一直高亮。
 (defun tk:clear-sel () (vl-catch-all-apply 'sssetfirst (list nil nil)))
@@ -281,43 +290,62 @@
           (list mn mx))))))
 
 ;; ---------- [3/5] 框选遮挡物 -> 最大可用矩形 ----------
-(defun tk:usable (inner / ss obs raw u i n w)
-  (princ "\n[3/5] 框选【图框内的遮挡物】（标题栏、变更记录表等），没有就回车跳过: ")
-  (setq ss (ssget))
-  (tk:clear-sel)
-  (setq obs nil n 0 w 0)
-  (if ss
+;; ---------- [3/5] 可用区：手动点两点 或 框选遮挡物自动算 ----------
+;; 返回值必须是 (宽 高 中心点) —— tk:confirm / tk:apply 要这个，
+;; 不能直接返回矩形 ((左下) (右上))，否则 tk:num 收到「点」会报类型不正确。
+(defun tk:usable (inner / p1 p2 mn mx ss obs raw u i n w)
+  (setq p1 (getpoint "\n[3/5] 点【可用区】第一个角点（回车=改为框选图框内遮挡物自动算）: "))
+  (if p1
     (progn
-      (setq raw (vl-catch-all-apply 'tk:allbox (list ss)))
-      (if (vl-catch-all-error-p raw) (setq raw nil))
-      (if raw
-        (foreach r (tk:merge-rects raw)
-          ;; 先裁进内框：遮挡物在内框外面时，不裁会算出跑到框外的可用区
-          (setq w (1+ w))
-          (if (tk:clip r inner)
-            (progn (setq obs (cons (tk:clip r inner) obs)) (setq n (1+ n))))))
-      (princ (strcat "\n      框选到 " (itoa w) " 块，落在内边框里的有 " (itoa n) " 块"))
-      (if (= n 0)
-        (princ "\n      提示：选到的对象全在内边框外面，检查第 2 步的内边框角点是否点对了")))
-    (princ "\n      没选到对象（对象在锁定图层或是外部参照时可能选不上）"))
-  (if obs
-    (setq u (tk:maxrect inner obs))
+      (setq p2 (getcorner p1 "\n      点对角: "))
+      (if (null p2)
+        nil
+        (progn
+          (setq p1 (tk:u2w p1) p2 (tk:u2w p2))
+          (setq mn (list (min (car p1) (car p2)) (min (cadr p1) (cadr p2)) 0.0))
+          (setq mx (list (max (car p1) (car p2)) (max (cadr p1) (cadr p2)) 0.0))
+          (setq u (list mn mx))
+          (princ "\n      可用区 = 手动指定"))))
     (progn
-      (princ "\n      无遮挡物，可用区 = 内边框")
-      (setq u inner)))
-  ;; 兜底：可用区必须完全在内边框里
-  (if (or (null u)
-          (< (tk:rx1 u) (tk:rx1 inner)) (< (tk:ry1 u) (tk:ry1 inner))
-          (> (tk:rx2 u) (tk:rx2 inner)) (> (tk:ry2 u) (tk:ry2 inner)))
+      (princ "\n      框选【图框内的遮挡物】（标题栏、变更记录表等），没有就回车跳过: ")
+      (setq ss (ssget))
+      (tk:clear-sel)
+      (setq obs nil n 0 w 0)
+      (if ss
+        (progn
+          (setq raw (vl-catch-all-apply 'tk:allbox (list ss)))
+          (if (vl-catch-all-error-p raw) (setq raw nil))
+          (if raw
+            (foreach r (tk:merge-rects raw)
+              ;; 先裁进内框：遮挡物在内框外面时，不裁会算出跑到框外的可用区
+              (setq w (1+ w))
+              (if (tk:clip r inner)
+                (progn (setq obs (cons (tk:clip r inner) obs)) (setq n (1+ n))))))
+          (princ (strcat "\n      框选到 " (itoa w) " 块，落在内边框里的有 " (itoa n) " 块"))
+          (if (= n 0)
+            (princ "\n      提示：选到的对象全在内边框外面。若对象选不上（锁定图层/外部参照），改用第 3 步「直接点两点」的方式")))
+        (princ "\n      没选到对象。若对象选不上（锁定图层/外部参照），改用第 3 步「直接点两点」的方式"))
+      (if obs
+        (setq u (tk:maxrect inner obs))
+        (progn
+          (princ "\n      无遮挡物，可用区 = 内边框")
+          (setq u inner)))
+      ;; 兜底：可用区必须完全在内边框里
+      (if (or (null u)
+              (< (tk:rx1 u) (tk:rx1 inner)) (< (tk:ry1 u) (tk:ry1 inner))
+              (> (tk:rx2 u) (tk:rx2 inner)) (> (tk:ry2 u) (tk:ry2 inner)))
+        (progn
+          (princ "\n      警告：可用区算出异常，已回退为整个内边框")
+          (setq u inner)))))
+  (if (null u)
+    nil
     (progn
-      (princ "\n      警告：可用区算出异常，已回退为整个内边框")
-      (setq u inner)))
-  (setq i (tk:boxinfo u))
-  (princ (strcat "\n      可用区 = " (tk:num (car i)) " x " (tk:num (cadr i))))
-  (tk:erase-box)
-  (tk:rect (car u) (cadr u))
-  (princ "\n      已用洋红框画出可用区（零件要装在这个框里）")
-  u)
+      (setq i (tk:boxinfo u))
+      (princ (strcat "\n      可用区 = " (tk:num (car i)) " x " (tk:num (cadr i))))
+      (tk:erase-box)
+      (tk:rect (car u) (cadr u))
+      (princ "\n      已用洋红框画出可用区（零件要装在这个框里）")
+      i)))
 
 ;; ---------- [4/5] 点零件 4 个极值（关捕捉，用准星原始位置） ----------
 (defun tk:ext (msg / p)
@@ -352,11 +380,15 @@
                     (tk:mark-edge mn mx (/ (max (car i) (cadr i)) 80.0))
                     (princ "\n")
                     (princ "\n      -- 零件范围已用洋红框标出（4 个圆点在四条边中点上）--")
-                    (princ (strcat "\n        最左 X = " (tk:num (car mn))))
-                    (princ (strcat "\n        最右 X = " (tk:num (car mx))))
-                    (princ (strcat "\n        最下 Y = " (tk:num (cadr mn))))
-                    (princ (strcat "\n        最上 Y = " (tk:num (cadr mx))))
-                    (princ (strcat "\n        宽 x 高 = " (tk:num (car i)) " x " (tk:num (cadr i))))
+                    (princ "\n        你点的 4 个位置：")
+                    (princ (strcat "\n          最左点  " (tk:num (car pL)) " , " (tk:num (cadr pL))))
+                    (princ (strcat "\n          最右点  " (tk:num (car pR)) " , " (tk:num (cadr pR))))
+                    (princ (strcat "\n          最下点  " (tk:num (car pB)) " , " (tk:num (cadr pB))))
+                    (princ (strcat "\n          最上点  " (tk:num (car pT)) " , " (tk:num (cadr pT))))
+                    (princ "\n        合成后的包围盒（取 4 个点的最小/最大）：")
+                    (princ (strcat "\n          左 X = " (tk:num (car mn)) "   右 X = " (tk:num (car mx))))
+                    (princ (strcat "\n          下 Y = " (tk:num (cadr mn)) "   上 Y = " (tk:num (cadr mx))))
+                    (princ (strcat "\n          宽 x 高 = " (tk:num (car i)) " x " (tk:num (cadr i))))
                     (initget "R")
                     (if (= (getkword "\n      贴住零件最外沿了吗？[回车=是 / R=重新点]: ") "R")
                       (progn (tk:erase-box) (setq pL nil) (princ "\n      重新点 4 个极值。"))
@@ -501,6 +533,8 @@
            (setq inner (tk:inner bb))
            (setq u (tk:usable inner))
            (setq p (tk:part))
+           (tk:boxok u "可用区")
+           (tk:boxok p "零件范围")
            (setq s (tk:confirm u p)))
     (tk:apply ss u p s)
     (progn (tk:erase-box) (princ "\n已取消，未做任何修改。")))

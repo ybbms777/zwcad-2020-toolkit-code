@@ -1,20 +1,20 @@
 ;;; TK: 标题框缩放。GBK 编码。
-;;; 图框自动缩放并对齐到零件上（零件不动，图框跟着走）。
+;;; 图框自动缩放并套到零件上（零件不动，图框跟着走）。
 ;;;
 ;;; 前几版踩过的坑，别改回去：
-;;;  1) vla-getboundingbox 返回 WCS 坐标，而 command 按 UCS 解释点，
-;;;     所以所有传给 command 的点必须先 (trans p 0 1) 转成 UCS。
-;;;  2) 用 grdraw 画的辅助框会被重绘冲掉，看不见；必须用真实实体（画完删掉）。
-;;;  3) 标极值时用 nentselp 判断点没点在对象上：点在对象上就取该对象的包围盒边缘。
-;;;     文字、标注这类对象点不准边缘（用户实测反馈），必须靠这一条。
-;;;  4) 图框内还有标题栏、变更记录表等遮挡物，可绘图区要用「最大空矩形」算，
-;;;     不能简单取内边框或遮挡物并集（并集往往是整个内框，等于没减）。
+;;;  1) vla-getboundingbox 返回 WCS，command 按 UCS 解释点，传 command 前必须 (trans p 0 1)。
+;;;  2) grdraw 画的辅助线会被重绘冲掉，看不见；必须用真实实体（画完删掉）。
+;;;  3) 「矩形」是点的点对 ((x1 y1 z) (x2 y2 z))，(car 矩形) 拿到的是「点」不是数字，
+;;;     拿去 min/max/vl-sort 会报「函数参数类型不正确」。取坐标一律走 tk:rx1/ry1/rx2/ry2。
+;;;  4) 最大空矩形必须先把遮挡物裁到内框里，否则遮挡物在内框外面时会算出跑到框外的可用区。
+;;;  5) 线这类对象包围盒有一边是 0 宽/高，要先撑开一点，否则等于没有遮挡。
 ;;; 注意：不要用 let —— 标准 AutoLISP 没有这个宏，只用 setq + defun 局部变量。
 (vl-load-com)
 
 (setq tk:boxents nil)
+(setq tk:mL 0.0 tk:mR 0.0 tk:mB 0.0 tk:mT 0.0)
 
-;; ---------- WCS -> UCS（传给 command 的点都要过这一步） ----------
+;; ---------- WCS -> UCS ----------
 (defun tk:w2u (p) (trans p 0 1))
 
 ;; ---------- 包围盒 ----------
@@ -37,14 +37,34 @@
                 mx (list (max (car mx) (car b)) (max (cadr mx) (cadr b)) 0.0))))))
   (if mn (list mn mx) nil))
 
-;; 每个对象各自的包围盒（遮挡物要单独算，不能并成一个）
-(defun tk:allbox (ss / i e bb out)
-  (setq i 0 out nil)
+;; ---------- 矩形取值：一律走这四个，别直接 (car 矩形) ----------
+(defun tk:rx1 (r) (car (car r)))
+(defun tk:ry1 (r) (cadr (car r)))
+(defun tk:rx2 (r) (car (cadr r)))
+(defun tk:ry2 (r) (cadr (cadr r)))
+
+;; 每个对象各自的包围盒；线这类一边为 0 的先撑开，否则挡不住东西
+(defun tk:allbox (ss / i e bb out eps)
+  (setq i 0 out nil eps 0.01)
   (while (< i (sslength ss))
     (setq e (ssname ss i) i (1+ i))
     (setq bb (tk:ebbox e))
-    (if bb (setq out (cons bb out))))
+    (if bb
+      (progn
+        (if (<= (tk:rx2 bb) (tk:rx1 bb))
+          (setq bb (list (list (- (tk:rx1 bb) eps) (tk:ry1 bb) 0.0)
+                         (list (+ (tk:rx2 bb) eps) (tk:ry2 bb) 0.0))))
+        (if (<= (tk:ry2 bb) (tk:ry1 bb))
+          (setq bb (list (list (tk:rx1 bb) (- (tk:ry1 bb) eps) 0.0)
+                         (list (tk:rx2 bb) (+ (tk:ry2 bb) eps) 0.0))))
+        (setq out (cons bb out)))))
   out)
+
+;; 把矩形裁到 R 里面；完全不相交返回 nil
+(defun tk:clip (r R / x1 y1 x2 y2)
+  (setq x1 (max (tk:rx1 r) (tk:rx1 R)) y1 (max (tk:ry1 r) (tk:ry1 R)))
+  (setq x2 (min (tk:rx2 r) (tk:rx2 R)) y2 (min (tk:ry2 r) (tk:ry2 R)))
+  (if (or (>= x1 x2) (>= y1 y2)) nil (list (list x1 y1 0.0) (list x2 y2 0.0))))
 
 (defun tk:boxinfo (bb / a b)
   (if bb
@@ -56,6 +76,18 @@
     nil))
 
 (defun tk:num (x) (rtos x 2 3))
+
+;; 每次 ssget 之后清掉选择集：否则对象一直处于选中（带夹点）状态，
+;; 会干扰下一步的框选，用户也会看到整个图框一直高亮。
+(defun tk:clear-sel () (vl-catch-all-apply 'sssetfirst (list nil nil)))
+
+;; ---------- 取点：临时关掉对象捕捉，用准星原始位置 ----------
+(defun tk:getpt (msg / os p)
+  (setq os (getvar "OSMODE"))
+  (setvar "OSMODE" 0)
+  (setq p (getpoint msg))
+  (setvar "OSMODE" os)
+  p)
 
 ;; ---------- 辅助显示：洋红实体（用完删除） ----------
 (defun tk:mag (e / d)
@@ -71,7 +103,6 @@
     (foreach e tk:boxents (if (entget e) (entdel e))))
   (setq tk:boxents nil))
 
-;; 画一个洋红矩形（不擦旧的）
 (defun tk:rect (p1 p2 / old e)
   (setq old (getvar "CMDECHO"))
   (setvar "CMDECHO" 0)
@@ -98,15 +129,7 @@
   (tk:dot (list xm y1 0.0) r)
   (tk:dot (list xm y2 0.0) r))
 
-;; ---------- 矩形工具 ----------
-;; 矩形 = ((x1 y1 z) (x2 y2 z))，是「点的点对」。
-;; 取坐标一律走这四个函数 —— 直接写 (car r) 拿到的是「点」不是数字，
-;; 拿去 min/max/vl-sort 会报「函数参数类型不正确」（踩过这个坑）。
-(defun tk:rx1 (r) (car (car r)))
-(defun tk:ry1 (r) (cadr (car r)))
-(defun tk:rx2 (r) (car (cadr r)))
-(defun tk:ry2 (r) (cadr (cadr r)))
-
+;; ---------- 矩形合并 / 最大空矩形 ----------
 (defun tk:rtouch (a b)
   (and (<= (tk:rx1 a) (tk:rx2 b)) (>= (tk:rx2 a) (tk:rx1 b))
        (<= (tk:ry1 a) (tk:ry2 b)) (>= (tk:ry2 a) (tk:ry1 b))))
@@ -115,7 +138,6 @@
   (list (list (min (tk:rx1 a) (tk:rx1 b)) (min (tk:ry1 a) (tk:ry1 b)) 0.0)
         (list (max (tk:rx2 a) (tk:rx2 b)) (max (tk:ry2 a) (tk:ry2 b)) 0.0)))
 
-;; 把相接/相交的矩形合并，避免几十个小矩形把网格撑爆
 (defun tk:merge-rects (rects / changed out a rest b)
   (setq changed T)
   (while changed
@@ -144,7 +166,7 @@
       (setq hit T)))
   hit)
 
-;; 在内框 R 里、避开 obs 的最大空矩形
+;; 在 R 里、避开 obs 的最大空矩形。obs 必须已经裁进 R，否则会算出跑到 R 外面的框。
 (defun tk:maxrect (R obs / xs ys nx ny best bar i1 i2 j1 j2 i j xa xb ya yb ok ar)
   (setq xs (tk:usort (append (list (tk:rx1 R) (tk:rx2 R))
                              (mapcar 'tk:rx1 obs) (mapcar 'tk:rx2 obs))))
@@ -199,8 +221,9 @@
   (foreach v tk:std (if (and (null r) (>= v f)) (setq r v)))
   (if r r f))
 
-(defun tk:calc (uw uh pw ph marg mode / s)
-  (setq s (max (/ (* pw (+ 1.0 marg)) uw) (/ (* ph (+ 1.0 marg)) uh)))
+;; 缩放系数：可用区要装下「零件 + 四边余量」
+(defun tk:calc (uw uh pw ph mode / s)
+  (setq s (max (/ (+ pw tk:mL tk:mR) uw) (/ (+ ph tk:mB tk:mT) uh)))
   (if (= mode "std") (setq s (tk:snap s)))
   s)
 
@@ -208,6 +231,7 @@
 (defun tk:frame (/ ss r i)
   (princ "\n[1/5] 框选【整个图框】（边框 + 标题栏一起），回车结束选择: ")
   (setq ss (ssget))
+  (tk:clear-sel)
   (if (null ss)
     (progn (princ "\n      没有选到对象。") nil)
     (progn
@@ -238,22 +262,34 @@
           (princ (strcat "\n      内边框 = " (tk:num (car i)) " x " (tk:num (cadr i))))
           (list mn mx))))))
 
-;; ---------- [3/5] 框选遮挡物，算最大可用矩形 ----------
-(defun tk:usable (inner / ss obs u i)
+;; ---------- [3/5] 框选遮挡物 -> 最大可用矩形 ----------
+(defun tk:usable (inner / ss obs raw u i n)
   (princ "\n[3/5] 框选【图框内的遮挡物】（标题栏、变更记录表等），没有就回车跳过: ")
   (setq ss (ssget))
+  (tk:clear-sel)
   (setq obs nil)
   (if ss
     (progn
-      (setq obs (vl-catch-all-apply 'tk:allbox (list ss)))
-      (if (vl-catch-all-error-p obs) (setq obs nil))
-      (if obs (setq obs (tk:merge-rects obs)))))
+      (setq raw (vl-catch-all-apply 'tk:allbox (list ss)))
+      (if (vl-catch-all-error-p raw) (setq raw nil))
+      (if raw
+        (progn
+          ;; 先裁进内框：遮挡物在内框外面时，不裁会算出跑到框外的可用区
+          (setq obs nil n 0)
+          (foreach r (tk:merge-rects raw)
+            (if (tk:clip r inner)
+              (progn (setq obs (cons (tk:clip r inner) obs)) (setq n (1+ n)))))
+          (princ (strcat "\n      遮挡物 " (itoa n) " 块（已裁进内边框）"))))))
   (if obs
-    (progn
-      (princ (strcat "\n      遮挡物合并成 " (itoa (length obs)) " 块"))
-      (setq u (tk:maxrect inner obs)))
+    (setq u (tk:maxrect inner obs))
     (princ "\n      无遮挡物，可用区 = 内边框"))
-  (if (null u) (setq u inner))
+  ;; 兜底：算出来的可用区必须完全在内边框里，否则回退
+  (if (or (null u)
+          (< (tk:rx1 u) (tk:rx1 inner)) (< (tk:ry1 u) (tk:ry1 inner))
+          (> (tk:rx2 u) (tk:rx2 inner)) (> (tk:ry2 u) (tk:ry2 inner)))
+    (progn
+      (princ "\n      警告：可用区算出异常，已回退为整个内边框")
+      (setq u inner)))
   (setq i (tk:boxinfo u))
   (princ (strcat "\n      可用区 = " (tk:num (car i)) " x " (tk:num (cadr i))))
   (tk:erase-box)
@@ -261,52 +297,34 @@
   (princ "\n      已用洋红框画出可用区（零件要装在这个框里）")
   u)
 
-;; ---------- 取一个极值：点空白=用点坐标；点在对象上=取该对象包围盒的边缘 ----------
-;; dir: "L" 最小X  "R" 最大X  "B" 最小Y  "T" 最大Y
-(defun tk:ext (msg dir / p e bb v fromobj)
-  (setq p (getpoint msg))
-  (if (null p)
-    nil
-    (progn
-      (setq e (car (nentselp p)) fromobj nil)
-      (if e
-        (progn
-          (setq bb (tk:ebbox e))
-          (if bb
-            (progn
-              (setq v (cond ((= dir "L") (car (car bb)))
-                            ((= dir "R") (car (cadr bb)))
-                            ((= dir "B") (cadr (car bb)))
-                            (T (cadr (cadr bb)))))
-              (setq fromobj T)))))
-      (if (not fromobj)
-        (setq v (if (or (= dir "L") (= dir "R")) (car p) (cadr p))))
-      (princ (strcat "\n        取到 " (if fromobj "对象边缘" "点坐标") " = " (tk:num v)))
-      v)))
+;; ---------- [4/5] 点零件 4 个极值（关捕捉，用准星原始位置） ----------
+(defun tk:ext (msg / p)
+  (setq p (tk:getpt msg))
+  (if p
+    (princ (strcat "\n        已记录 " (tk:num (car p)) " , " (tk:num (cadr p)))))
+  p)
 
-;; ---------- [4/5] 零件范围：点 4 个极值 ----------
-(defun tk:part-points (xL / xR yB yT mn mx i r)
+(defun tk:part-points (pL / pR pB pT mn mx i r)
   (setq r nil)
   (while (null r)
-    (if (null xL)
-      (setq xL (tk:ext "\n      点【零件最左】位置（点在对象上=取该对象最左边缘）: " "L")))
-    (if (null xL)
+    (if (null pL) (setq pL (tk:ext "\n      点【零件最左】位置（关捕捉，用准星）: ")))
+    (if (null pL)
       (setq r 'cancel)
       (progn
-        (setq xR (tk:ext "\n      点【零件最右】位置（点在对象上=取该对象最右边缘）: " "R"))
-        (if (null xR)
+        (setq pR (tk:ext "\n      点【零件最右】位置: "))
+        (if (null pR)
           (setq r 'cancel)
           (progn
-            (setq yB (tk:ext "\n      点【零件最下】位置（点在对象上=取该对象最下边缘）: " "B"))
-            (if (null yB)
+            (setq pB (tk:ext "\n      点【零件最下】位置: "))
+            (if (null pB)
               (setq r 'cancel)
               (progn
-                (setq yT (tk:ext "\n      点【零件最上】位置（点在对象上=取该对象最上边缘）: " "T"))
-                (if (null yT)
+                (setq pT (tk:ext "\n      点【零件最上】位置: "))
+                (if (null pT)
                   (setq r 'cancel)
                   (progn
-                    (setq mn (list (min xL xR) (min yB yT) 0.0))
-                    (setq mx (list (max xL xR) (max yB yT) 0.0))
+                    (setq mn (list (min (car pL) (car pR)) (min (cadr pB) (cadr pT)) 0.0))
+                    (setq mx (list (max (car pL) (car pR)) (max (cadr pB) (cadr pT)) 0.0))
                     (setq i (tk:boxinfo (list mn mx)))
                     (tk:rect mn mx)
                     (tk:mark-edge mn mx (/ (max (car i) (cadr i)) 80.0))
@@ -319,7 +337,7 @@
                     (princ (strcat "\n        宽 x 高 = " (tk:num (car i)) " x " (tk:num (cadr i))))
                     (initget "R")
                     (if (= (getkword "\n      贴住零件最外沿了吗？[回车=是 / R=重新点]: ") "R")
-                      (progn (tk:erase-box) (setq xL nil) (princ "\n      重新点 4 个极值。"))
+                      (progn (tk:erase-box) (setq pL nil) (princ "\n      重新点 4 个极值。"))
                       (setq r i)))))))))))
   (if (eq r 'cancel) nil r))
 
@@ -328,6 +346,7 @@
   (while (not done)
     (princ "\n      框选零件（把最左/最右/最上/最下都框进去），回车结束: ")
     (setq ss (ssget))
+    (tk:clear-sel)
     (if (null ss)
       (setq done T)
       (progn
@@ -350,15 +369,36 @@
               (setq done T)))))))
   info)
 
-(defun tk:part (/ xL)
-  (setq xL (tk:ext "\n[4/5] 点【零件最左】位置（回车=改为框选零件自动量；点在对象上=取该对象最左边缘）: " "L"))
-  (if (null xL) (tk:part-select) (tk:part-points xL)))
+(defun tk:part (/ pL)
+  (setq pL (tk:getpt "\n[4/5] 点【零件最左】位置（关捕捉，用准星；回车=改为框选零件自动量）: "))
+  (if (null pL) (tk:part-select) (tk:part-points pL)))
 
-;; ---------- [5/5] 尺寸可覆盖 + 预览确认 ----------
-(defun tk:confirm (u p / uw uh pw ph marg mode s kw txt v done)
+;; ---------- [5/5] 尺寸 -> 余量 -> 预览确认 ----------
+(defun tk:ask-mm (msg dflt / s)
+  (setq s (getstring msg))
+  (if (and s (/= s "")) (atof s) dflt))
+
+(defun tk:ask-margins (/ s)
+  (setq s (getstring "\n      要留余量吗？[回车=不留（零件贴边）/ Y=留（按 mm 分上下左右设）]: "))
+  (if (and s (member (strcase s) '("Y" "YES" "是" "1")))
+    (progn
+      (princ "\n      输入四边余量，单位 mm（直接回车用默认 5）:")
+      (setq tk:mT (tk:ask-mm "\n        上余量 mm <5>: " 5.0))
+      (setq tk:mB (tk:ask-mm "\n        下余量 mm <5>: " 5.0))
+      (setq tk:mL (tk:ask-mm "\n        左余量 mm <5>: " 5.0))
+      (setq tk:mR (tk:ask-mm "\n        右余量 mm <5>: " 5.0))
+      (princ (strcat "\n      余量：上 " (tk:num tk:mT) " / 下 " (tk:num tk:mB)
+                     " / 左 " (tk:num tk:mL) " / 右 " (tk:num tk:mR) " mm"))
+      T)
+    (progn
+      (setq tk:mL 0.0 tk:mR 0.0 tk:mB 0.0 tk:mT 0.0)
+      (princ "\n      不留余量，零件贴边")
+      nil)))
+
+(defun tk:confirm (u p / uw uh pw ph mode s kw txt v done)
   (setq uw (car u) uh (cadr u))
   (setq pw (car p) ph (cadr p))
-  (setq marg 0.05 mode "exact" done nil s nil)
+  (setq mode "exact" done nil s nil)
   (setq txt (getstring (strcat "\n[5/5] 零件尺寸 <" (tk:num pw) " x " (tk:num ph)
                                "> [回车=用这个 / 或输入 宽,高 覆盖]: ")))
   (if (and txt (/= txt ""))
@@ -369,25 +409,25 @@
           (setq pw (car v) ph (cadr v))
           (princ (strcat "\n      已改为手输尺寸 " (tk:num pw) " x " (tk:num ph))))
         (princ "\n      尺寸格式不对，用原值。"))))
+  (tk:ask-margins)
   (while (not done)
-    (setq s (tk:calc uw uh pw ph marg mode))
+    (setq s (tk:calc uw uh pw ph mode))
     (princ "\n")
     (princ (strcat "\n      可用区    " (tk:num uw) " x " (tk:num uh)))
     (princ (strcat "\n      零件尺寸  " (tk:num pw) " x " (tk:num ph)))
-    (princ (strcat "\n      留边余量  " (tk:num (* marg 100.0)) " %"))
+    (princ (strcat "\n      余量 mm   上 " (tk:num tk:mT) " 下 " (tk:num tk:mB)
+                   " 左 " (tk:num tk:mL) " 右 " (tk:num tk:mR)))
     (princ (strcat "\n      缩放系数  " (tk:num s) "   [" (if (= mode "std") "标准比例" "精确贴合") "]"))
     (initget "S M")
-    (setq kw (getkword "\n      [回车=执行 / S=切标准比例 / M=改余量 / Esc=取消]: "))
+    (setq kw (getkword "\n      [回车=执行 / S=切标准比例 / M=重设余量 / Esc=取消]: "))
     (cond
       ((= kw "S") (setq mode (if (= mode "exact") "std" "exact")))
-      ((= kw "M") (progn
-                    (setq txt (getstring (strcat "\n      新余量百分比 <" (tk:num (* marg 100.0)) ">): ")))
-                    (if (and txt (/= txt "")) (setq marg (/ (atof txt) 100.0)))))
+      ((= kw "M") (tk:ask-margins))
       (T (setq done T))))
   s)
 
-;; ---------- 执行：缩放 + 用位移量精确对齐到零件中心 ----------
-(defun tk:apply (ss u p s / uw uh uctr pw ph pctr base uc2 delta old)
+;; ---------- 执行：缩放 + 按四边余量精确落位 ----------
+(defun tk:apply (ss u p s / uw uh uctr pw ph pctr base uc2 uw2 uh2 plx pby tx ty delta old)
   (tk:erase-box)
   (setq uw (car u) uh (cadr u) uctr (caddr u))
   (setq pw (car p) ph (cadr p) pctr (caddr p))
@@ -398,21 +438,27 @@
       (setq old (getvar "CMDECHO"))
       (setvar "CMDECHO" 0)
       (command "_.SCALE" ss "" (tk:w2u base) s)
+      ;; 缩放后可绘图区中心 = base + s*(uctr - base)
       (setq uc2 (list (+ (car base) (* s (- (car uctr) (car base))))
                       (+ (cadr base) (* s (- (cadr uctr) (cadr base))))
                       0.0))
       (if pctr
         (progn
-          (setq delta (list (- (car pctr) (car uc2)) (- (cadr pctr) (cadr uc2)) 0.0))
+          (setq uw2 (* s uw) uh2 (* s uh))
+          ;; 零件左下角
+          (setq plx (- (car pctr) (/ pw 2.0)) pby (- (cadr pctr) (/ ph 2.0)))
+          ;; 目标：可用区左边 = 零件左边 - 左余量；可用区下边 = 零件下边 - 下余量
+          (setq tx (+ (- plx tk:mL) (/ uw2 2.0)))
+          (setq ty (+ (- pby tk:mB) (/ uh2 2.0)))
+          (setq delta (list (- tx (car uc2)) (- ty (cadr uc2)) 0.0))
           (command "_.MOVE" ss "" (tk:w2u (list 0.0 0.0 0.0)) (tk:w2u delta))))
       (setvar "CMDECHO" old)
-      (princ (strcat "\n      完成：图框缩放 " (tk:num s) " 倍，已对齐到零件中心（零件未动）。可 U 撤销。"))
+      (princ (strcat "\n      完成：图框缩放 " (tk:num s) " 倍，已按余量套到零件上（零件未动）。可 U 撤销。"))
       T)))
 
 ;; ---------- 主命令 ----------
 (defun tk:run (/ fr ss bb inner u p s)
   (defun *error* (msg)
-    ;; 清理也要包 catch-all：否则出错时 *error* 自己再炸，用户看到两行错
     (vl-catch-all-apply 'tk:erase-box nil)
     (if msg
       (if (not (wcmatch (strcase (vl-princ-to-string msg))
@@ -422,8 +468,8 @@
   (princ "\n")
   (princ "\n  ================= 标题框缩放 =================")
   (princ "\n  [1] 选图框  [2] 点内边框  [3] 框选遮挡物")
-  (princ "\n  [4] 点零件 4 个极值  [5] 确认执行")
-  (princ "\n  零件不用动，图框会自己缩放到零件正中。Esc 随时取消。")
+  (princ "\n  [4] 点零件 4 个极值  [5] 设余量并执行")
+  (princ "\n  零件不用动，图框会自己缩放并套到零件上。Esc 随时取消。")
   (princ "\n  =============================================")
   (if (and (setq fr (tk:frame))
            (setq ss (car fr) bb (cadr fr))
@@ -438,5 +484,5 @@
 (defun c:TK () (tk:run))
 (defun c:BTK () (tk:run))
 
-(princ "\nTK 标题框缩放：选图框 → 点内边框 → 框选遮挡物 → 点零件极值，图框自动缩放并对齐。")
+(princ "\nTK 标题框缩放：选图框 → 点内边框 → 框选遮挡物 → 点零件极值 → 设余量，图框自动套上去。")
 (princ)

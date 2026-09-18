@@ -14,8 +14,12 @@
 (setq tk:boxents nil)
 (setq tk:mL 0.0 tk:mR 0.0 tk:mB 0.0 tk:mT 0.0)
 
-;; ---------- WCS -> UCS ----------
+;; ---------- 坐标系：内部一律用 WCS ----------
+;; vla-getboundingbox 返回 WCS，而 getpoint / getcorner 返回 UCS，command 又按 UCS 解释点。
+;; 所以：取点后先 tk:u2w 转成 WCS 再算；传给 command 前再 tk:w2u 转回 UCS。
+;; 混用会导致辅助框画到十万八千里外、遮挡物被误判到框外（踩过这个坑）。
 (defun tk:w2u (p) (trans p 0 1))
+(defun tk:u2w (p) (trans p 1 0))
 
 ;; ---------- 包围盒 ----------
 (defun tk:ebbox (e / o mn mx)
@@ -82,13 +86,13 @@
 ;; 会干扰下一步的框选，用户也会看到整个图框一直高亮。
 (defun tk:clear-sel () (vl-catch-all-apply 'sssetfirst (list nil nil)))
 
-;; ---------- 取点：临时关掉对象捕捉，用准星原始位置 ----------
+;; ---------- 取点：临时关掉对象捕捉，用准星原始位置；返回 WCS ----------
 (defun tk:getpt (msg / os p)
   (setq os (getvar "OSMODE"))
   (setvar "OSMODE" 0)
   (setq p (getpoint msg))
   (setvar "OSMODE" os)
-  p)
+  (if p (tk:u2w p) nil))
 
 ;; ---------- 辅助显示：洋红实体（用完删除） ----------
 (defun tk:mag (e / d)
@@ -257,6 +261,8 @@
       (if (null p2)
         nil
         (progn
+          ;; 取到的点是 UCS，先换成 WCS 再算范围
+          (setq p1 (tk:u2w p1) p2 (tk:u2w p2))
           (setq mn (list (min (car p1) (car p2)) (min (cadr p1) (cadr p2)) 0.0))
           (setq mx (list (max (car p1) (car p2)) (max (cadr p1) (cadr p2)) 0.0))
           (setq i (tk:boxinfo (list mn mx)))
@@ -264,27 +270,31 @@
           (list mn mx))))))
 
 ;; ---------- [3/5] 框选遮挡物 -> 最大可用矩形 ----------
-(defun tk:usable (inner / ss obs raw u i n)
+(defun tk:usable (inner / ss obs raw u i n w)
   (princ "\n[3/5] 框选【图框内的遮挡物】（标题栏、变更记录表等），没有就回车跳过: ")
   (setq ss (ssget))
   (tk:clear-sel)
-  (setq obs nil)
+  (setq obs nil n 0 w 0)
   (if ss
     (progn
       (setq raw (vl-catch-all-apply 'tk:allbox (list ss)))
       (if (vl-catch-all-error-p raw) (setq raw nil))
       (if raw
-        (progn
+        (foreach r (tk:merge-rects raw)
           ;; 先裁进内框：遮挡物在内框外面时，不裁会算出跑到框外的可用区
-          (setq obs nil n 0)
-          (foreach r (tk:merge-rects raw)
-            (if (tk:clip r inner)
-              (progn (setq obs (cons (tk:clip r inner) obs)) (setq n (1+ n)))))
-          (princ (strcat "\n      遮挡物 " (itoa n) " 块（已裁进内边框）"))))))
+          (setq w (1+ w))
+          (if (tk:clip r inner)
+            (progn (setq obs (cons (tk:clip r inner) obs)) (setq n (1+ n))))))
+      (princ (strcat "\n      框选到 " (itoa w) " 块，落在内边框里的有 " (itoa n) " 块"))
+      (if (= n 0)
+        (princ "\n      提示：选到的对象全在内边框外面，检查第 2 步的内边框角点是否点对了")))
+    (princ "\n      没选到对象（对象在锁定图层或是外部参照时可能选不上）"))
   (if obs
     (setq u (tk:maxrect inner obs))
-    (princ "\n      无遮挡物，可用区 = 内边框"))
-  ;; 兜底：算出来的可用区必须完全在内边框里，否则回退
+    (progn
+      (princ "\n      无遮挡物，可用区 = 内边框")
+      (setq u inner)))
+  ;; 兜底：可用区必须完全在内边框里
   (if (or (null u)
           (< (tk:rx1 u) (tk:rx1 inner)) (< (tk:ry1 u) (tk:ry1 inner))
           (> (tk:rx2 u) (tk:rx2 inner)) (> (tk:ry2 u) (tk:ry2 inner)))

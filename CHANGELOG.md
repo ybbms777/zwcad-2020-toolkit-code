@@ -2,6 +2,12 @@
 
 最新在最上面。
 
+## 1.2.24 - 2026-09-18
+- ★ 修复 TKE 写入报「undefined function - SETCAR」：ZWCAD 的 LISP 没有 setcar 这个函数，导致整批写入在第一个属性后就中断（只写进去一个值，且 UNDO _End 没执行到）
+- TKE 去掉 setcar：写入流程没有「写后再读」的需求，不需要回写内存副本
+- TKE 每个属性单独包 catch-all：某个属性写失败不再中断整批，也不会让 UNDO _End 执行不到（避免用户的选择集被留在未结束的 UNDO 组里）
+- TKE 写入后显示「已写入 N / M 个属性值」，有失败会明确警告，不再只报「已写入 N 项」
+
 ## 1.2.23 - 2026-09-18
 - ★ 修复 TKE 读不到块属性（根因）：ZWCAD 2020 上 vla-get-attributes 这个方法一个属性都读不出来（块名认得对、属性数=0），导致「没找到图框」
 - TKE 改用纯 DXF 读块属性：属性就排在 INSERT 后面，用 entnext 一路走遇到非 ATTRIB 停。完全不依赖 ActiveX，兼容性最好

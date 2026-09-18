@@ -1,20 +1,22 @@
 {
-  "version": "1.2.21",
-  "date": "2026-09-18 18:00",
+  "version": "1.2.22",
+  "date": "2026-09-18 18:09",
   "fontVersion": "2026.09.18",
   "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "新增第 9 个模块「图框编辑器」TKE / BKE：只针对样品图。料号只输一次数字，自动填 客户编号 KY-xxx / 产品编号 样品-xxx / 产品料号 01000xxx 三处，解决三处数字相同却要分别输入、容易漏改的问题",
-    "TKE 还能改 图名（客户料号）/ 材质 / 负责人 / 样品数量 / 版本 / 图纸日期 / 共几页 / 第几页，每项回车即保持原值；只列真正变化的字段供确认；写入合成为一步，按 U 可整体撤销",
-    "TKE 自动扫描图纸里的块找出图框（认「料号」「图名」属性），找不到或多个时改为点选",
-    "安装菜单新增 [9] 图框编辑器，全部安装移到 [10]，字体安装移到 [11]"
+    "修复 TKE 找不到图框：原来 ssget \"X\" 带了 (66 . 1)「有属性」过滤，在 ZWCAD 上一个块都选不到，直接报「没找到图框」",
+    "TKE 改为扫描全部布局（按 (410 . 布局名) 逐个搜），图框在别的布局里也能找到",
+    "TKE 不再用 vla-get-hasattributes 当门槛（该属性在部分 CAD 上取不到，会把全部块判成没属性），改为直接读属性看结果",
+    "TKE 支持一张图纸多个图框：找到多个时可选「全部一起改」，共几页 / 第几页 按左右顺序自动编号；也可点选只改一个",
+    "TKE 增加诊断输出：扫描到多少块参照 / 带属性 / 认出图框；找不到时打印块名或带属性块的标记名，便于定位模板差异",
+    "TKE 判断左右顺序改用块插入点（DXF 组码 10），不再依赖 ActiveX 取包围盒"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "b0dcad41d2e96819705302e833cd89e720556268c1ca4a50e2fe4c09c44407fa",
+    "CHANGELOG.md": "a4ed0cde7fc4904fed9ebe656bc47c3ca39a5ed71b431fb5c3ba1f95b5d4bb52",
     "README.md": "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "069f64794cbba21c528bddff85fe8fd0d26cd2266569e65df252956f2d4cc2c5",
@@ -29,7 +31,7 @@
     "modules/font.lsp": "c1f0ad769ffb048502c67dabd6eeb74e55f8f193e8f3ecc7387a8fd2bce40f6d",
     "modules/frame.lsp": "b60d1cbdb9c56dae8edd3cccd20e7842e8b4e15db4de819b7776cefd41849cd7",
     "modules/symbols.lsp": "c57b9bcab8f3121bfa14879a32d417466d7903685ed3f8776851dba8f561dc0c",
-    "modules/tkblock.lsp": "7e279065ac855a92d0d75c66ff1f09dcbaf34c789f253327e51266e6b53e1dd2",
+    "modules/tkblock.lsp": "c7cd2baa04af84bb7f20040886020c74d1389144f1a8fa289524bf895683e6a4",
     "modules/tolerance.lsp": "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
     "modules/trim.lsp": "8fbfb20c587da172766bce4c74507ec0819a49972166822ee1c2b2c1118b7320",
     "src/Bridge.cs": "559a3816a40df82a771b321c3b1d3a96a328eccc41c449a590751eb70712e998",
@@ -37,7 +39,7 @@
     "src/build.ps1": "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
     "update.ps1": "957adee06b439d1064470f0694e464402419d57c16353586842bc2d7064b0fb3",
     "一键安装.cmd": "7779c1f386380627d542a076b81371c2c2d2ad7fe1fa7b41e33eef91bf30d917",
-    "使用说明.md": "edfeb6b733a5f3632fd69165d2bb4b06f11d6b1e35a60a6fd49ec3fc8fdd12c4",
+    "使用说明.md": "b9c83a5f2bff33960e2dfef626addc532da2648722c97fab252317260983a502",
     "取消自动加载.cmd": "3a638a469aa3b91d6f4280f7a7df784d96468a8a43be04936a10b0ee0892adef",
     "更新.cmd": "b9ab8d094902b6bf2f8c5f9fa5e12c4039e97e33da297f0577ffa818bae900e1"
   }

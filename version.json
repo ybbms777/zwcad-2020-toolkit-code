@@ -1,6 +1,6 @@
 {
   "version": "1.2.0",
-  "date": "2026-09-18 11:41",
+  "date": "2026-09-18 11:53",
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
@@ -21,7 +21,7 @@
     "modules/symbols.lsp": "c57b9bcab8f3121bfa14879a32d417466d7903685ed3f8776851dba8f561dc0c",
     "modules/tolerance.lsp": "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
     "modules/trim.lsp": "8fbfb20c587da172766bce4c74507ec0819a49972166822ee1c2b2c1118b7320",
-    "publish.ps1": "fe50c52d6a08d22b856312d26c08b1c787f8ed2b7fbc2643e01b09b1d4e2c6a5",
+    "publish.ps1": "c2ec3cd3c1eadee7fc2aa527bb8f3b20699813ced4dcf82f987ced85fa8d7561",
     "src/Bridge.cs": "559a3816a40df82a771b321c3b1d3a96a328eccc41c449a590751eb70712e998",
     "src/Mouse.cs": "ea06aed49b6b1e746d8eb5ed4474c0c19c60213d58a8db06d32af2b4c7a85b34",
     "src/build.ps1": "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",

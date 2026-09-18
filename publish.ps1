@@ -13,7 +13,8 @@
 # ============================================================
 param(
     [string]$Version,
-    [string]$Message
+    [string]$Message,
+    [switch]$NoZip
 )
 
 # 注意：不能用 Stop —— git 往 stderr 写东西时会被当成终止错误，
@@ -24,6 +25,7 @@ try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch {}
 $root    = $PSScriptRoot
 $pubDir  = 'C:\Users\Administrator\zwcad-toolkit-publish'
 $pubRepo = 'git@github.com:ybbms777/zwcad-2020-toolkit-code.git'
+$zipPath = 'C:\Users\Administrator\Desktop\ZWCAD工具包1.2.zip'
 
 $excludeDirs  = @('fonts', '.git', '_backup')
 $excludeFiles = @('selection.lsp', 'install-state.json', 'install.log', 'version.json',
@@ -74,6 +76,41 @@ function Next-Version([string]$cur) {
     return ($p -join '.')
 }
 
+# 重打完整分发压缩包（含字体）。这是给"新同事首次安装"用的一次性完整包。
+# 排除：.git、_backup、日志、状态、备份文件。
+function New-KitZip([string]$outPath) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+
+    $skipDirs  = @('.git', '_backup')
+    $skipFiles = @('install.log', 'install-state.json')
+
+    $list = @()
+    Get-ChildItem -LiteralPath $root -Recurse -File -Force | ForEach-Object {
+        $rel = $_.FullName.Substring($root.Length + 1) -replace '\\', '/'
+        $parts = $rel -split '/'
+        if ($parts | Where-Object { $skipDirs -contains $_ }) { return }
+        if ($skipFiles -contains $rel) { return }
+        if ($rel -like '*.bak' -or $rel -like '*.new' -or $rel -like '*.tmp') { return }
+        $list += $rel
+    }
+    $list = $list | Sort-Object
+
+    $tmp = $outPath + '.tmp'
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+    $zip = [IO.Compression.ZipFile]::Open($tmp, 'Create')
+    try {
+        foreach ($rel in $list) {
+            $full = Join-Path $root ($rel -replace '/', '\')
+            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $zip, $full, $rel, [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    } finally {
+        $zip.Dispose()
+    }
+    Move-Item -LiteralPath $tmp -Destination $outPath -Force
+    return $list.Count
+}
+
 Write-Host ''
 Write-Host '  ZWCAD 工具包 - 发布' -ForegroundColor Cyan
 Write-Host '  ------------------------------------------------' -ForegroundColor DarkCyan
@@ -100,7 +137,7 @@ if (Test-Path -LiteralPath $localJson) {
 $versionGiven = [bool]$Version
 
 # ---------- 2. 生成清单 ----------
-Say '  [1/4] 计算文件指纹...' 'Cyan'
+Say '  [1/5] 计算文件指纹...' 'Cyan'
 $files = Get-PublishFiles
 $map = [ordered]@{}
 foreach ($rel in $files) {
@@ -139,7 +176,7 @@ if ($sameAsBefore -and -not $versionGiven) {
 }
 
 # ---------- 3. 同步到公开仓库目录 ----------
-Say '  [2/4] 同步代码到公开仓库...' 'Cyan'
+Say '  [2/5] 同步代码到公开仓库...' 'Cyan'
 if (-not (Test-Path -LiteralPath $pubDir)) {
     Say '        公开仓库目录不存在，尝试 clone...' 'DarkGray'
     $out = & $gitExe clone $pubRepo $pubDir 2>&1 | Out-String
@@ -173,7 +210,7 @@ Say ('        已同步 ' + $files.Count + ' 个文件（不含字体）') 'Gray
 # ---------- 4. 提交并推送 ----------
 if (-not $Message) { $Message = '更新到 ' + $Version }
 
-Say '  [3/4] 推送到公开仓库...' 'Cyan'
+Say '  [3/5] 推送到公开仓库...' 'Cyan'
 $g = Run-Git $pubDir @('add', '-A')
 if ($g.Code -ne 0) { Say ('        git add 失败: ' + $g.Out) 'Red'; exit 1 }
 $st = (& $gitExe -C $pubDir status --porcelain 2>&1 | Out-String).Trim()
@@ -187,7 +224,7 @@ if ($st) {
     Say '        公开仓库无变化' 'DarkGray'
 }
 
-Say '  [4/4] 推送到私有仓库（含字体全量备份）...' 'Cyan'
+Say '  [4/5] 推送到私有仓库（含字体全量备份）...' 'Cyan'
 $g = Run-Git $root @('add', '-A')
 if ($g.Code -ne 0) { Say ('        git add 失败: ' + $g.Out) 'Red'; exit 1 }
 $st2 = (& $gitExe -C $root status --porcelain 2>&1 | Out-String).Trim()
@@ -201,8 +238,25 @@ if ($st2) {
     Say '        私有仓库无变化' 'DarkGray'
 }
 
+# ---------- 5. 重打完整分发压缩包 ----------
+if ($NoZip) {
+    Say '  [5/5] 已指定 -NoZip，跳过重打压缩包' 'DarkGray'
+} else {
+    Say '  [5/5] 重打完整压缩包（含字体，约需十几秒）...' 'Cyan'
+    try {
+        $n = New-KitZip $zipPath
+        $mb = [Math]::Round((Get-Item -LiteralPath $zipPath).Length / 1MB, 1)
+        Say ('        ' + $n + ' 个条目，' + $mb + ' MiB') 'Gray'
+        Say ('        ' + $zipPath) 'Gray'
+    } catch {
+        Say ('        压缩包生成失败: ' + $_.Exception.Message) 'Red'
+        Say '        其余步骤已完成，可稍后手工重打。' 'Yellow'
+    }
+}
+
 Write-Host ''
 Say ('  发布完成：' + $Version) 'Green'
 Say '  同事/客户双击"更新.cmd"即可拿到新版。' 'Gray'
+Say '  新同事拿压缩包做首次安装。' 'Gray'
 Write-Host ''
 exit 0

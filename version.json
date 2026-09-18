@@ -1,19 +1,19 @@
 {
-  "version": "1.2.17",
-  "date": "2026-09-18 16:28",
+  "version": "1.2.18",
+  "date": "2026-09-18 16:42",
   "fontVersion": "2026.09.18",
   "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "TK 第 3 步改为「圈出遮挡物」：点两个对角点圈一个矩形，可圈多块。不再用框选对象",
-    "解决「整个图框是一个块，里面的标题栏/变更记录表选不上」：框选永远只能选中整个图框块，范围等于整张图，等于没减。圈区域不受块、锁定图层、外部参照影响",
-    "TK 第 4 步去掉重复的「零件最左」提示：原来 [4/5] 和下一步各提示一次，会让人以为第一次点击没被记录"
+    "TK 第 3 步可视化：每圈一块遮挡物立刻画黄框，算出的可用区画蓝框，并打印「内边框 vs 可用区」尺寸对比",
+    "TK 第 3 步新增确认/重圈：算完可用区问「可用区对吗？[回车=是 / R=重新圈]」，圈歪了不用重跑整个命令",
+    "修复 TK 第 4 步「零件最左」不打印已记录：最左点走的是另一个取点函数，漏了这行打印，让人以为点击没被记录"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "ae0e0ec14e52f5a338f58136c66f4331700fba1b7841c70cef573ae4b698f4d9",
+    "CHANGELOG.md": "8702643da7964c0dcc88cb36023de896abee272533acd0d12010730b026147af",
     "README.md": "1149b3d07c44cc625acac7ce1905a695512d7e5aebec56b63d835ad6a13d3e4c",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "a64315bd5881c6ba3e5ea02324b66f1c48aab201326fb703aa0fd0a5fe08c1d7",
@@ -26,7 +26,7 @@
     "modules/dimline.lsp": "6a2f20fd45ca52637fc2c3a87018e3d4c9ddd3a65563a2da920281c8b8b835f1",
     "modules/extend.lsp": "4ef64e61ee90e7f017ab62d8a391e40a0a1d90ae4e929f9ba1d5bb0d35007e5a",
     "modules/font.lsp": "c1f0ad769ffb048502c67dabd6eeb74e55f8f193e8f3ecc7387a8fd2bce40f6d",
-    "modules/frame.lsp": "7a90116b53ba6e38b1a42053338cb358a30adb5b057afd88f4015a4902e166a4",
+    "modules/frame.lsp": "4111f35bf53658811a2c09567bfb9a2aec0697760fa4129c6da1072887f6f227",
     "modules/symbols.lsp": "c57b9bcab8f3121bfa14879a32d417466d7903685ed3f8776851dba8f561dc0c",
     "modules/tolerance.lsp": "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
     "modules/trim.lsp": "8fbfb20c587da172766bce4c74507ec0819a49972166822ee1c2b2c1118b7320",
@@ -35,7 +35,7 @@
     "src/build.ps1": "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
     "update.ps1": "957adee06b439d1064470f0694e464402419d57c16353586842bc2d7064b0fb3",
     "一键安装.cmd": "7779c1f386380627d542a076b81371c2c2d2ad7fe1fa7b41e33eef91bf30d917",
-    "使用说明.md": "2f1ff1f6f885ec13f293441ca31525dbd6dd09a2e5db8f4a323eb5ed3fc76132",
+    "使用说明.md": "d94d0c9ba1a37f026b7fcacea81a5056d1ad730aaf3db3b5b02632fadfb7a23a",
     "取消自动加载.cmd": "3a638a469aa3b91d6f4280f7a7df784d96468a8a43be04936a10b0ee0892adef",
     "更新.cmd": "b9ab8d094902b6bf2f8c5f9fa5e12c4039e97e33da297f0577ffa818bae900e1"
   }

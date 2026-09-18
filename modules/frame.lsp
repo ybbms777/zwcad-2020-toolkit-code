@@ -115,11 +115,12 @@
   (if p (tk:u2w p) nil))
 
 ;; ---------- 辅助显示：洋红实体（用完删除） ----------
-(defun tk:mag (e / d)
+(defun tk:mag (e col / d c)
+  (setq c (if col col 6))
   (if e
     (progn
       (setq d (entget e))
-      (entmod (if (assoc 62 d) (subst (cons 62 6) (assoc 62 d) d) (append d (list (cons 62 6)))))
+      (entmod (if (assoc 62 d) (subst (cons 62 c) (assoc 62 d) d) (append d (list (cons 62 c)))))
       (setq tk:boxents (cons e tk:boxents))))
   nil)
 
@@ -128,14 +129,17 @@
     (foreach e tk:boxents (if (entget e) (entdel e))))
   (setq tk:boxents nil))
 
-(defun tk:rect (p1 p2 / old e)
+;; 画辅助矩形。颜色：2=黄（圈出的遮挡物）5=蓝（可用区）6=洋红（零件范围）
+(defun tk:rectc (p1 p2 col / old e)
   (setq old (getvar "CMDECHO"))
   (setvar "CMDECHO" 0)
   (command "_.RECTANG" (tk:w2u p1) (tk:w2u p2))
   (setvar "CMDECHO" old)
   (setq e (entlast))
-  (if (and e (= (cdr (assoc 0 (entget e))) "LWPOLYLINE")) (tk:mag e))
+  (if (and e (= (cdr (assoc 0 (entget e))) "LWPOLYLINE")) (tk:mag e col))
   nil)
+
+(defun tk:rect (p1 p2) (tk:rectc p1 p2 6))
 
 (defun tk:dot (p r / old e)
   (setq old (getvar "CMDECHO"))
@@ -293,55 +297,66 @@
 ;; 不用 ssget：整个图框常常是一个块，里面的标题栏/变更表根本选不上
 ;; （选到的永远是整个图框块，裁进内框就把内框全盖住，等于没减）。
 ;; 改成让用户直接圈区域，块 / 锁定图层 / 外部参照都不影响。
-(defun tk:usable (inner / p1 p2 mn mx obs obs2 u i n done)
-  (princ "\n[3/5] 圈出【图框内遮挡物】（标题栏、变更记录表等）")
-  (princ "\n      点遮挡物的两个对角点；可以圈多块；没有遮挡物就直接回车")
-  (setq obs nil n 0 done nil)
-  (while (not done)
-    (setq p1 (getpoint (if (= n 0)
-                         "\n      点第 1 块遮挡物的第一个角点（回车=没有遮挡物）: "
-                         "\n      继续圈下一块（回车=圈完）: ")))
-    (if (null p1)
-      (setq done T)
+;; 每圈一块就画黄框，圈完画蓝框（可用区）并让用户确认——看不到就判断不了圈对没有。
+(defun tk:usable (inner / p1 p2 mn mx obs obs2 u i ii n done again)
+  (setq again T)
+  (while again
+    (tk:erase-box)
+    (princ "\n[3/5] 圈出【图框内遮挡物】（标题栏、变更记录表等）")
+    (princ "\n      点遮挡物的两个对角点；可以圈多块；没有遮挡物就直接回车")
+    (setq obs nil n 0 done nil)
+    (while (not done)
+      (setq p1 (getpoint (if (= n 0)
+                           "\n      点第 1 块遮挡物的第一个角点（回车=没有遮挡物）: "
+                           "\n      继续圈下一块（回车=圈完）: ")))
+      (if (null p1)
+        (setq done T)
+        (progn
+          (setq p2 (getcorner p1 "\n      点对角: "))
+          (if (null p2)
+            (setq done T)
+            (progn
+              (setq p1 (tk:u2w p1) p2 (tk:u2w p2))
+              (setq mn (list (min (car p1) (car p2)) (min (cadr p1) (cadr p2)) 0.0))
+              (setq mx (list (max (car p1) (car p2)) (max (cadr p1) (cadr p2)) 0.0))
+              (setq obs (cons (list mn mx) obs))
+              (setq n (1+ n))
+              (tk:rectc mn mx 2)
+              (princ (strcat "\n      已圈第 " (itoa n) " 块（黄框，继续圈或回车结束）")))))))
+    ;; 裁进内框：遮挡物在内框外面时，不裁会算出跑到框外的可用区
+    (setq obs2 nil)
+    (foreach r obs
+      (if (tk:clip r inner) (setq obs2 (cons (tk:clip r inner) obs2))))
+    (setq obs obs2)
+    (if (> n 0)
+      (princ (strcat "\n      圈了 " (itoa n) " 块，落在内边框里的有 " (itoa (length obs)) " 块")))
+    (if obs
+      (setq u (tk:maxrect inner obs))
       (progn
-        (setq p2 (getcorner p1 "\n      点对角: "))
-        (if (null p2)
-          (setq done T)
-          (progn
-            (setq p1 (tk:u2w p1) p2 (tk:u2w p2))
-            (setq mn (list (min (car p1) (car p2)) (min (cadr p1) (cadr p2)) 0.0))
-            (setq mx (list (max (car p1) (car p2)) (max (cadr p1) (cadr p2)) 0.0))
-            (setq obs (cons (list mn mx) obs))
-            (setq n (1+ n))
-            (princ (strcat "\n      已圈第 " (itoa n) " 块（继续圈，或回车结束）")))))))
-  ;; 裁进内框：遮挡物在内框外面时，不裁会算出跑到框外的可用区
-  (setq obs2 nil)
-  (foreach r obs
-    (if (tk:clip r inner) (setq obs2 (cons (tk:clip r inner) obs2))))
-  (setq obs obs2)
-  (if (> n 0)
-    (princ (strcat "\n      圈了 " (itoa n) " 块，落在内边框里的有 " (itoa (length obs)) " 块")))
-  (if obs
-    (setq u (tk:maxrect inner obs))
-    (progn
-      (princ "\n      无遮挡物，可用区 = 内边框")
-      (setq u inner)))
-  ;; 兜底：可用区必须完全在内边框里
-  (if (or (null u)
-          (< (tk:rx1 u) (tk:rx1 inner)) (< (tk:ry1 u) (tk:ry1 inner))
-          (> (tk:rx2 u) (tk:rx2 inner)) (> (tk:ry2 u) (tk:ry2 inner)))
-    (progn
-      (princ "\n      警告：可用区算出异常，已回退为整个内边框")
-      (setq u inner)))
-  (if (null u)
-    nil
-    (progn
-      (setq i (tk:boxinfo u))
-      (princ (strcat "\n      可用区 = " (tk:num (car i)) " x " (tk:num (cadr i))))
-      (tk:erase-box)
-      (tk:rect (car u) (cadr u))
-      (princ "\n      已用洋红框画出可用区（零件要装在这个框里）")
-      i)))
+        (princ "\n      无遮挡物，可用区 = 内边框")
+        (setq u inner)))
+    ;; 兜底：可用区必须完全在内边框里
+    (if (or (null u)
+            (< (tk:rx1 u) (tk:rx1 inner)) (< (tk:ry1 u) (tk:ry1 inner))
+            (> (tk:rx2 u) (tk:rx2 inner)) (> (tk:ry2 u) (tk:ry2 inner)))
+      (progn
+        (princ "\n      警告：可用区算出异常，已回退为整个内边框")
+        (setq u inner)))
+    (setq ii (tk:boxinfo inner))
+    (setq i (tk:boxinfo u))
+    (princ (strcat "\n      内边框 = " (tk:num (car ii)) " x " (tk:num (cadr ii))))
+    (princ (strcat "\n      可用区 = " (tk:num (car i)) " x " (tk:num (cadr i))))
+    (princ "\n      黄框 = 你圈的遮挡物，蓝框 = 算出的可用区（零件要装进这个框）")
+    (tk:rectc (car u) (cadr u) 5)
+    (initget "R")
+    (if (= (getkword "\n      可用区对吗？[回车=是 / R=重新圈]: ") "R")
+      (princ "\n      重新圈遮挡物。")
+      (setq again nil)))
+  (setq ii (tk:boxinfo inner))
+  (setq i (tk:boxinfo u))
+  (princ (strcat "\n      内边框 = " (tk:num (car ii)) " x " (tk:num (cadr ii))
+                 "   可用区 = " (tk:num (car i)) " x " (tk:num (cadr i))))
+  i)
 
 ;; ---------- [4/5] 点零件 4 个极值（关捕捉，用准星原始位置） ----------
 (defun tk:ext (msg / p)
@@ -423,6 +438,9 @@
   ;; 只保留一个「最左」提示：原来提示出现两次，用户会以为第一次点击没被记录
   (princ "\n[4/5] 依次点零件的最左 / 最右 / 最下 / 最上 四个位置（关捕捉，用准星）")
   (setq pL (tk:getpt "\n      点【零件最左】位置（回车=改为框选零件自动量）: "))
+  ;; 最左点也要打印已记录：tk:getpt 不打印，只有 tk:ext 打印，
+  ;; 漏掉这一行用户会以为最左没被记录（其它三个都有）
+  (if pL (princ (strcat "\n        已记录 " (tk:num (car pL)) " , " (tk:num (cadr pL)))))
   (if (null pL) (tk:part-select) (tk:part-points pL)))
 
 ;; ---------- [5/5] 尺寸 -> 余量 -> 预览确认 ----------

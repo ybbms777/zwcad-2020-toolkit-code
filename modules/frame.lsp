@@ -5,6 +5,8 @@
 ;;;  1) vla-getboundingbox 返回 WCS 坐标，而 command 按 UCS 解释点，
 ;;;     所以所有传给 command 的点必须先 (trans p 0 1) 转成 UCS。
 ;;;  2) 用 grdraw 画的辅助框会被重绘冲掉，看不见；必须用真实实体（画完删掉）。
+;;;  3) 标极值时用 nentselp 判断点没点在对象上：点在对象上就取该对象的包围盒边缘。
+;;;     文字、标注这类对象点不准边缘（用户实测反馈），必须靠这一条。
 (vl-load-com)
 
 (setq tk:boxents nil)
@@ -76,6 +78,39 @@
     (tk:set-magenta (entlast)))
   (setvar "CMDECHO" old))
 
+;; 在包围盒四条边的中点画圆点（标出 4 个极值位置）
+(defun tk:mark-edge (mn mx r / x1 y1 x2 y2 xm ym)
+  (setq x1 (car mn) y1 (cadr mn) x2 (car mx) y2 (cadr mx))
+  (setq xm (/ (+ x1 x2) 2.0) ym (/ (+ y1 y2) 2.0))
+  (tk:mark (list (list x1 ym 0.0) (list x2 ym 0.0) (list xm y1 0.0) (list xm y2 0.0)) r))
+
+;; ---------- 取一个极值 ----------
+;; 点空白处 -> 用点的坐标；
+;; 点在对象上 -> 用该对象包围盒在指定方向的边缘（文字、标注这类点不准的对象就靠这个）
+;; dir: "L" 最小X  "R" 最大X  "B" 最小Y  "T" 最大Y
+(defun tk:ext (msg dir / p e bb v fromobj)
+  (setq p (getpoint msg))
+  (if (null p)
+    nil
+    (progn
+      (setq e (car (nentselp p)))
+      (setq fromobj nil)
+      (if e
+        (progn
+          (setq bb (tk:ebbox e))
+          (if bb
+            (progn
+              (setq v (cond ((= dir "L") (car (car bb)))
+                            ((= dir "R") (car (cadr bb)))
+                            ((= dir "B") (cadr (car bb)))
+                            (T (cadr (cadr bb)))))
+              (setq fromobj T)))))
+      (if (not fromobj)
+        (setq v (if (or (= dir "L") (= dir "R")) (car p) (cadr p))))
+      (princ (strcat "\n        取到 " (if fromobj "对象边缘" "点坐标")
+                     " = " (tk:num v)))
+      v)))
+
 ;; ---------- 解析 "105.95,117.9" / "105.95x117.9" / "105.95 117.9" ----------
 (defun tk:parse2 (s / i c buf res)
   (setq res nil buf "" i 1)
@@ -134,34 +169,35 @@
           (princ (strcat "\n      可绘图区 = " (tk:num (car i)) " x " (tk:num (cadr i))))
           i)))))
 
-;; ---------- [3/4] 零件范围：点 4 个极值点（回车改为框选自动量） ----------
-;; pL 可由调用方先给（用户在第 3 步提示处直接点的那一下就是「最左」）
-(defun tk:part-points (pL / pR pB pT mn mx i r)
+;; ---------- [3/4] 零件范围：点 4 个极值（回车改为框选自动量） ----------
+;; xL 可由调用方先给（用户在第 3 步提示处直接点的那一下就是「最左」）
+(defun tk:part-points (xL / xR yB yT mn mx i r)
   (setq r nil)
   (while (null r)
-    (if (null pL) (setq pL (getpoint "\n      点【零件最左】位置: ")))
-    (if (null pL)
+    (if (null xL)
+      (setq xL (tk:ext "\n      点【零件最左】位置（点在对象上=取该对象最左边缘）: " "L")))
+    (if (null xL)
       (setq r 'cancel)
       (progn
-        (setq pR (getpoint "\n      点【零件最右】位置: "))
-        (if (null pR)
+        (setq xR (tk:ext "\n      点【零件最右】位置（点在对象上=取该对象最右边缘）: " "R"))
+        (if (null xR)
           (setq r 'cancel)
           (progn
-            (setq pB (getpoint "\n      点【零件最下】位置: "))
-            (if (null pB)
+            (setq yB (tk:ext "\n      点【零件最下】位置（点在对象上=取该对象最下边缘）: " "B"))
+            (if (null yB)
               (setq r 'cancel)
               (progn
-                (setq pT (getpoint "\n      点【零件最上】位置: "))
-                (if (null pT)
+                (setq yT (tk:ext "\n      点【零件最上】位置（点在对象上=取该对象最上边缘）: " "T"))
+                (if (null yT)
                   (setq r 'cancel)
                   (progn
-                    (setq mn (list (min (car pL) (car pR)) (min (cadr pB) (cadr pT)) 0.0))
-                    (setq mx (list (max (car pL) (car pR)) (max (cadr pB) (cadr pT)) 0.0))
+                    (setq mn (list (min xL xR) (min yB yT) 0.0))
+                    (setq mx (list (max xL xR) (max yB yT) 0.0))
                     (setq i (tk:boxinfo (list mn mx)))
                     (tk:draw-box mn mx)
-                    (tk:mark (list pL pR pB pT) (/ (max (car i) (cadr i)) 80.0))
+                    (tk:mark-edge mn mx (/ (max (car i) (cadr i)) 80.0))
                     (princ "\n")
-                    (princ "\n      -- 已用洋红框标出范围，4 个圆点就是你点的 4 个极值点 --")
+                    (princ "\n      -- 已用洋红框标出范围，4 个圆点在四条边的中点上 --")
                     (princ (strcat "\n        最左 X = " (tk:num (car mn))))
                     (princ (strcat "\n        最右 X = " (tk:num (car mx))))
                     (princ (strcat "\n        最下 Y = " (tk:num (cadr mn))))
@@ -169,7 +205,7 @@
                     (princ (strcat "\n        宽 x 高 = " (tk:num (car i)) " x " (tk:num (cadr i))))
                     (initget "R")
                     (if (= (getkword "\n      洋红框贴住零件最外沿了吗？[回车=是 / R=重新点]: ") "R")
-                      (progn (tk:erase-box) (setq pL nil) (princ "\n      重新点 4 个极值点。"))
+                      (progn (tk:erase-box) (setq xL nil) (princ "\n      重新点 4 个极值。"))
                       (setq r i)))))))))))
   (if (eq r 'cancel) nil r))
 
@@ -200,9 +236,9 @@
               (setq done T)))))))
   info)
 
-(defun tk:part (/ p)
-  (setq p (getpoint "\n[3/4] 点【零件最左】位置（回车=改为框选零件自动量）: "))
-  (if (null p) (tk:part-select) (tk:part-points p)))
+(defun tk:part (/ xL)
+  (setq xL (tk:ext "\n[3/4] 点【零件最左】位置（回车=改为框选零件自动量；点在对象上=取该对象最左边缘）: " "L"))
+  (if (null xL) (tk:part-select) (tk:part-points xL)))
 
 ;; ---------- [4/4] 尺寸可覆盖 + 预览确认 ----------
 (defun tk:confirm (u p / uw uh pw ph marg mode s kw txt v done)

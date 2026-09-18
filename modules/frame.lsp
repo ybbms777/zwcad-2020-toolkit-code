@@ -15,6 +15,7 @@
 (setq tk:mL 0.0 tk:mR 0.0 tk:mB 0.0 tk:mT 0.0)
 ;; 命令开始时保存的系统变量原值，出错或结束时一定恢复
 (setq tk:os0 nil tk:ce0 nil)
+(setq tk:cands nil)   ;; 可用区候选矩形（遮挡物切出来的所有空矩形）
 
 (defun tk:save-vars ()
   (setq tk:os0 (getvar "OSMODE") tk:ce0 (getvar "CMDECHO")))
@@ -147,7 +148,7 @@
   (command "_.CIRCLE" (tk:w2u p) r)
   (setvar "CMDECHO" old)
   (setq e (entlast))
-  (if (and e (= (cdr (assoc 0 (entget e))) "CIRCLE")) (tk:mag e))
+  (if (and e (= (cdr (assoc 0 (entget e))) "CIRCLE")) (tk:mag e 6))
   nil)
 
 (defun tk:mark-edge (mn mx r / x1 y1 x2 y2 xm ym)
@@ -232,6 +233,55 @@
   best)
 
 ;; ---------- 解析 "105.95,117.9" ----------
+;; 列出 R 里避开 obs 的所有空矩形（不止最大的那个）。
+;; 为什么要全部：最大面积的不一定最贴合零件 ——
+;; 比如右上角有个表，最大空矩形是「整宽 x 表下方」，但「表左侧 x 整高」面积小一点，
+;; 装同一个零件时需要的缩放系数更小（框更小、留白更少）。
+;; 所以候选都留着，等第 5 步知道零件尺寸后再挑。
+(defun tk:allrects (R obs / xs ys nx ny out i1 i2 j1 j2 i j ok xa xb ya yb)
+  (setq xs (tk:usort (append (list (tk:rx1 R) (tk:rx2 R))
+                             (mapcar 'tk:rx1 obs) (mapcar 'tk:rx2 obs))))
+  (setq ys (tk:usort (append (list (tk:ry1 R) (tk:ry2 R))
+                             (mapcar 'tk:ry1 obs) (mapcar 'tk:ry2 obs))))
+  (setq nx (1- (length xs)) ny (1- (length ys)))
+  (setq out nil i1 0)
+  (while (< i1 nx)
+    (setq j1 0)
+    (while (< j1 ny)
+      (setq i2 i1)
+      (while (< i2 nx)
+        (setq j2 j1)
+        (while (< j2 ny)
+          (setq xa (nth i1 xs) xb (nth (1+ i2) xs) ya (nth j1 ys) yb (nth (1+ j2) ys))
+          (setq ok T i i1)
+          (while (and ok (< i (1+ i2)))
+            (setq j j1)
+            (while (and ok (< j (1+ j2)))
+              (if (tk:cellused obs (nth i xs) (nth (1+ i) xs) (nth j ys) (nth (1+ j) ys))
+                (setq ok nil))
+              (setq j (1+ j)))
+            (setq i (1+ i)))
+          (if ok (setq out (cons (list (list xa ya 0.0) (list xb yb 0.0)) out)))
+          (setq j2 (1+ j2)))
+        (setq i2 (1+ i2)))
+      (setq j1 (1+ j1)))
+    (setq i1 (1+ i1)))
+  out)
+
+;; 从候选里挑「装下这个零件所需缩放系数最小」的那个 —— 框最小、留白最少。
+;; 系数相同就取面积大的。
+(defun tk:pickrect (cands pw ph / best bs ba r i s ar)
+  (setq best nil bs nil ba -1.0)
+  (foreach r cands
+    (setq i (tk:boxinfo r))
+    (if (and i (> (car i) 0.0) (> (cadr i) 0.0))
+      (progn
+        (setq s (max (/ (+ pw tk:mL tk:mR) (car i)) (/ (+ ph tk:mB tk:mT) (cadr i))))
+        (setq ar (* (car i) (cadr i)))
+        (if (or (null bs) (< s bs) (and (equal s bs 1e-9) (> ar ba)))
+          (setq bs s ba ar best r)))))
+  best)
+
 (defun tk:parse2 (s / i c buf res)
   (setq res nil buf "" i 1)
   (while (<= i (strlen s))
@@ -331,9 +381,12 @@
     (if (> n 0)
       (princ (strcat "\n      圈了 " (itoa n) " 块，落在内边框里的有 " (itoa (length obs)) " 块")))
     (if obs
-      (setq u (tk:maxrect inner obs))
+      (progn
+        (setq tk:cands (tk:allrects inner obs))
+        (setq u (tk:maxrect inner obs)))
       (progn
         (princ "\n      无遮挡物，可用区 = 内边框")
+        (setq tk:cands (list inner))
         (setq u inner)))
     ;; 兜底：可用区必须完全在内边框里
     (if (or (null u)
@@ -345,8 +398,11 @@
     (setq ii (tk:boxinfo inner))
     (setq i (tk:boxinfo u))
     (princ (strcat "\n      内边框 = " (tk:num (car ii)) " x " (tk:num (cadr ii))))
-    (princ (strcat "\n      可用区 = " (tk:num (car i)) " x " (tk:num (cadr i))))
-    (princ "\n      黄框 = 你圈的遮挡物，蓝框 = 算出的可用区（零件要装进这个框）")
+    (if (null tk:cands) (setq tk:cands (list u)))
+    (princ (strcat "\n      候选可用区 " (itoa (length tk:cands))
+                   " 个（第 5 步知道零件尺寸后自动挑最贴合的）"))
+    (princ (strcat "\n      其中最大的 = " (tk:num (car i)) " x " (tk:num (cadr i))))
+    (princ "\n      黄框 = 你圈的遮挡物，蓝框 = 最大的那个候选")
     (tk:rectc (car u) (cadr u) 5)
     (initget "R")
     (if (= (getkword "\n      可用区对吗？[回车=是 / R=重新圈]: ") "R")
@@ -465,7 +521,7 @@
       (princ "\n      不留余量，零件贴边")
       nil)))
 
-(defun tk:confirm (u p / uw uh pw ph mode s kw txt v done)
+(defun tk:confirm (u p / uw uh pw ph mode s kw txt v done best bi)
   (setq uw (car u) uh (cadr u))
   (setq pw (car p) ph (cadr p))
   (setq mode "exact" done nil s nil)
@@ -480,6 +536,16 @@
           (princ (strcat "\n      已改为手输尺寸 " (tk:num pw) " x " (tk:num ph))))
         (princ "\n      尺寸格式不对，用原值。"))))
   (tk:ask-margins)
+  ;; 知道零件尺寸了：从候选里挑装它最省料的那个（框最小、留白最少）
+  (setq best (tk:pickrect tk:cands pw ph))
+  (if best
+    (progn
+      (setq bi (tk:boxinfo best))
+      (setq uw (car bi) uh (cadr bi))
+      (tk:erase-box)
+      (tk:rectc (car best) (cadr best) 5)
+      (princ (strcat "\n      已按零件尺寸从 " (itoa (length tk:cands))
+                     " 个候选里挑出最合适的可用区 " (tk:num uw) " x " (tk:num uh)))))
   (while (not done)
     (setq s (tk:calc uw uh pw ph mode))
     (princ "\n")
@@ -497,7 +563,7 @@
   s)
 
 ;; ---------- 执行：缩放 + 按四边余量精确落位 ----------
-(defun tk:apply (ss u p s / uw uh uctr pw ph pctr base uc2 uw2 uh2 plx pby tx ty delta old)
+(defun tk:apply (ss u p s / uw uh uctr pw ph pctr base uc2 uw2 uh2 plx pby tx ty delta old gx gy)
   (tk:erase-box)
   (setq uw (car u) uh (cadr u) uctr (caddr u))
   (setq pw (car p) ph (cadr p) pctr (caddr p))
@@ -517,9 +583,15 @@
           (setq uw2 (* s uw) uh2 (* s uh))
           ;; 零件左下角
           (setq plx (- (car pctr) (/ pw 2.0)) pby (- (cadr pctr) (/ ph 2.0)))
-          ;; 目标：可用区左边 = 零件左边 - 左余量；可用区下边 = 零件下边 - 下余量
-          (setq tx (+ (- plx tk:mL) (/ uw2 2.0)))
-          (setq ty (+ (- pby tk:mB) (/ uh2 2.0)))
+          ;; 余量之外还有富余空间（可用区和零件长宽比不同必然有），
+          ;; 平分成两半放到对边，避免「一边贴死、另一边大量留白」
+          (setq gx (/ (- uw2 pw tk:mL tk:mR) 2.0))
+          (setq gy (/ (- uh2 ph tk:mB tk:mT) 2.0))
+          (if (< gx 0.0) (setq gx 0.0))
+          (if (< gy 0.0) (setq gy 0.0))
+          ;; 目标：可用区左边 = 零件左边 - 左余量 - 平分富余；下边同理
+          (setq tx (+ (- plx tk:mL gx) (/ uw2 2.0)))
+          (setq ty (+ (- pby tk:mB gy) (/ uh2 2.0)))
           (setq delta (list (- tx (car uc2)) (- ty (cadr uc2)) 0.0))
           (command "_.MOVE" ss "" (tk:w2u (list 0.0 0.0 0.0)) (tk:w2u delta))))
       (setvar "CMDECHO" old)

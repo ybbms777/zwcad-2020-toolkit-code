@@ -99,13 +99,21 @@
   (tk:dot (list xm y2 0.0) r))
 
 ;; ---------- 矩形工具 ----------
+;; 矩形 = ((x1 y1 z) (x2 y2 z))，是「点的点对」。
+;; 取坐标一律走这四个函数 —— 直接写 (car r) 拿到的是「点」不是数字，
+;; 拿去 min/max/vl-sort 会报「函数参数类型不正确」（踩过这个坑）。
+(defun tk:rx1 (r) (car (car r)))
+(defun tk:ry1 (r) (cadr (car r)))
+(defun tk:rx2 (r) (car (cadr r)))
+(defun tk:ry2 (r) (cadr (cadr r)))
+
 (defun tk:rtouch (a b)
-  (and (<= (car a) (car (cadr b))) (>= (car (cadr a)) (car b))
-       (<= (cadr a) (cadr (cadr b))) (>= (cadr (cadr a)) (cadr b))))
+  (and (<= (tk:rx1 a) (tk:rx2 b)) (>= (tk:rx2 a) (tk:rx1 b))
+       (<= (tk:ry1 a) (tk:ry2 b)) (>= (tk:ry2 a) (tk:ry1 b))))
 
 (defun tk:runion (a b)
-  (list (list (min (car a) (car b)) (min (cadr a) (cadr b)) 0.0)
-        (list (max (car (cadr a)) (car (cadr b))) (max (cadr (cadr a)) (cadr (cadr b))) 0.0)))
+  (list (list (min (tk:rx1 a) (tk:rx1 b)) (min (tk:ry1 a) (tk:ry1 b)) 0.0)
+        (list (max (tk:rx2 a) (tk:rx2 b)) (max (tk:ry2 a) (tk:ry2 b)) 0.0)))
 
 ;; 把相接/相交的矩形合并，避免几十个小矩形把网格撑爆
 (defun tk:merge-rects (rects / changed out a rest b)
@@ -131,19 +139,17 @@
 (defun tk:cellused (obs xa xb ya yb / hit)
   (setq hit nil)
   (foreach o obs
-    (if (and (< xa (car (cadr o))) (> xb (car (car o)))
-             (< ya (cadr (cadr o))) (> yb (cadr (car o))))
+    (if (and (< xa (tk:rx2 o)) (> xb (tk:rx1 o))
+             (< ya (tk:ry2 o)) (> yb (tk:ry1 o)))
       (setq hit T)))
   hit)
 
 ;; 在内框 R 里、避开 obs 的最大空矩形
 (defun tk:maxrect (R obs / xs ys nx ny best bar i1 i2 j1 j2 i j xa xb ya yb ok ar)
-  (setq xs (cons (car R) (cons (car (cadr R)) (mapcar '(lambda (o) (car o)) obs))))
-  (setq xs (append xs (mapcar '(lambda (o) (car (cadr o))) obs)))
-  (setq xs (tk:usort xs))
-  (setq ys (cons (cadr R) (cons (cadr (cadr R)) (mapcar '(lambda (o) (cadr o)) obs))))
-  (setq ys (append ys (mapcar '(lambda (o) (cadr (cadr o))) obs)))
-  (setq ys (tk:usort ys))
+  (setq xs (tk:usort (append (list (tk:rx1 R) (tk:rx2 R))
+                             (mapcar 'tk:rx1 obs) (mapcar 'tk:rx2 obs))))
+  (setq ys (tk:usort (append (list (tk:ry1 R) (tk:ry2 R))
+                             (mapcar 'tk:ry1 obs) (mapcar 'tk:ry2 obs))))
   (setq nx (1- (length xs)) ny (1- (length ys)))
   (setq best nil bar -1.0)
   (setq i1 0)
@@ -406,9 +412,12 @@
 ;; ---------- 主命令 ----------
 (defun tk:run (/ fr ss bb inner u p s)
   (defun *error* (msg)
-    (tk:erase-box)
-    (if (and msg (not (wcmatch (strcase msg) "*CANCEL*,*QUIT*,*BREAK*,*取消*,*退出*")))
-      (princ (strcat "\n提示：" msg)))
+    ;; 清理也要包 catch-all：否则出错时 *error* 自己再炸，用户看到两行错
+    (vl-catch-all-apply 'tk:erase-box nil)
+    (if msg
+      (if (not (wcmatch (strcase (vl-princ-to-string msg))
+                        "*CANCEL*,*QUIT*,*BREAK*,*取消*,*退出*"))
+        (princ (strcat "\n提示：" (vl-princ-to-string msg)))))
     (princ))
   (princ "\n")
   (princ "\n  ================= 标题框缩放 =================")

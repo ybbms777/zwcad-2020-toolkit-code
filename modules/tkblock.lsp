@@ -7,10 +7,16 @@
 ;;; 前几版踩过的坑，别改回去：
 ;;;  1) 这个图框里「产品编号」和「客户编号」两个属性的标记都叫「编号」，
 ;;;     只按标记找会找错。做法：先用值前缀认（KY* / 样品*），认不出来再按出现次序取。
-;;;  2) 取属性方法一律包 vl-catch-all-apply —— 不同 CAD 版本上方法名/返回值可能有差异。
-;;;  3) 不要用 let —— 标准 AutoLISP 没有这个宏，只用 setq + defun 局部变量。
-;;;  4) getkword 按回车返回 nil，不能直接 (= nil "Y") 比较，必须先判 null。
-;;;  5) 提示里不要用宽字符框线和中文对齐填充，cmd.exe 里会错位。
+;;;  2) ssget "X" 加 (66 . 1) 过滤在 ZWCAD 上一个都选不到（用户实测：直接报「没找到图框」）。
+;;;     改成只过滤 (0 . "INSERT")，再自己读属性判断 —— 少一个过滤条件少一个失效点。
+;;;  3) ssget "X" 只搜当前空间，图框在别的布局里就找不到。要按布局名逐个 (410 . 名字) 搜。
+;;;  4) 不要用 vla-get-hasattributes 当门槛 —— 这个属性在部分 CAD 上取不到，
+;;;     一旦取不到就会把全部块判成「没属性」。直接读属性、看结果里有没有东西最稳。
+;;;  5) 取属性方法一律包 vl-catch-all-apply —— 不同 CAD 版本上方法名/返回值可能有差异。
+;;;  6) 不要用 let —— 标准 AutoLISP 没有这个宏，只用 setq + defun 局部变量。
+;;;  7) getkword 按回车返回 nil，不能直接 (= nil "Y") 比较，必须先判 null。
+;;;  8) entsel 配 initget 时，用户输关键字会返回「字符串」而不是表，比较前要 (type r) 判一下。
+;;;  9) 提示里不要用宽字符框线和中文对齐填充，cmd.exe 里会错位。
 
 (vl-load-com)
 
@@ -33,9 +39,11 @@
 (setq tke:custpre "KY-")
 (setq tke:samplepre "样品-")
 
-(setq tke:list nil)   ;; ((标记 当前值 属性对象) ...)
-(setq tke:plan nil)   ;; ((键 显示名 新值 原值) ...)
-(setq tke:ent nil)    ;; 当前编辑的图框块
+(setq tke:frames nil)    ;; ((块参照 . 属性表) ...)，按 X 从左到右排好
+(setq tke:allrefs nil)   ;; 图纸里全部块参照（点选兜底用）
+(setq tke:list nil)      ;; 第一个图框的属性表 ((标记 当前值 属性对象) ...)
+(setq tke:plan nil)      ;; ((键 显示名 新值 原值) ...)
+(setq tke:multi nil)     ;; T = 本次是多个图框一起改
 
 ;; ---------- 读一个块参照的全部属性 ----------
 (defun tke:attrs (ent / obj arr out tag txt)
@@ -53,52 +61,148 @@
     (setq out (cons (list tag txt a) out)))
   (reverse out))
 
-;; 读属性并判断是不是「图框块」：要有「料号」或「图名」属性
-(defun tke:ok (ent / L)
+;; 探测一个实体：能读出属性就返回属性表，否则 nil
+(defun tke:probe (ent / L)
   (if (null ent)
     nil
     (progn
       (setq L (vl-catch-all-apply 'tke:attrs (list ent)))
-      (if (or (vl-catch-all-error-p L) (null L))
+      (if (or (vl-catch-all-error-p L) (null L) (= (length L) 0))
         nil
-        (if (or (member "料号" (mapcar 'car L))
-                (member "图名" (mapcar 'car L)))
-          L
-          nil)))))
+        L))))
+
+;; 属性表里有没有「料号」或「图名」——判断是不是图框块
+(defun tke:is-frame (L)
+  (and L
+       (or (member "料号" (mapcar 'car L))
+           (member "图名" (mapcar 'car L)))))
 
 (defun tke:blkname (ent / n)
   (setq n (cdr (assoc 2 (entget ent))))
   (if n n "?"))
 
-;; ---------- 找图框 ----------
-(defun tke:find (/ ss i ent hits n)
-  (setq hits nil)
-  (setq ss (vl-catch-all-apply 'ssget (list "X" '((0 . "INSERT") (66 . 1)))))
-  (if (vl-catch-all-error-p ss) (setq ss nil))
-  (if ss
+;; 块的插入点（DXF 组码 10）。用它判左右顺序，不用 ActiveX 取包围盒 —— 少一个失效点。
+(defun tke:ipt (ent / p)
+  (setq p (cdr (assoc 10 (entget ent))))
+  (if p p '(0.0 0.0 0.0)))
+
+;; 块插入点 X（用于从左到右排序）
+(defun tke:cx (ent) (car (tke:ipt ent)))
+
+(defun tke:del-nth (L n / out i)
+  (setq out nil i 0)
+  (foreach e L
+    (if (/= i n) (setq out (cons e out)))
+    (setq i (1+ i)))
+  (reverse out))
+
+;; 按从左到右排序（插入排序，图框数量很少够用）
+(defun tke:sortx (L / out e best bi k bx)
+  (setq out nil)
+  (while L
+    (setq best nil bi 0 k 0 bx nil)
+    (foreach e L
+      (if (or (null bx) (< (tke:cx (car e)) bx))
+        (setq bx (tke:cx (car e)) best e bi k))
+      (setq k (1+ k)))
+    (setq out (cons best out))
+    (setq L (tke:del-nth L bi)))
+  (reverse out))
+
+;; ---------- 扫描全部布局里的块参照，找出所有图框 ----------
+(defun tke:scan (/ doc lays n i lo nm ss j ent L hits nblk nattr tags)
+  (setq hits nil tke:allrefs nil nblk 0 nattr 0 tags nil)
+  (setq doc (vl-catch-all-apply 'vla-get-activedocument
+              (list (vl-catch-all-apply 'vlax-get-acad-object))))
+  (if (vl-catch-all-error-p doc) (setq doc nil))
+  (setq lays nil)
+  (if doc
     (progn
+      (setq lays (vl-catch-all-apply 'vla-get-layouts (list doc)))
+      (if (vl-catch-all-error-p lays) (setq lays nil))))
+  (if lays
+    (progn
+      (setq n (vl-catch-all-apply 'vla-get-count (list lays)))
+      (if (vl-catch-all-error-p n) (setq n 0))
       (setq i 0)
-      (while (< i (sslength ss))
-        (if (tke:ok (ssname ss i)) (setq hits (cons (ssname ss i) hits)))
+      (while (< i n)
+        (setq lo (vl-catch-all-apply 'vla-item (list lays i)))
+        (if (not (vl-catch-all-error-p lo))
+          (progn
+            (setq nm (vl-catch-all-apply 'vla-get-name (list lo)))
+            (if (not (vl-catch-all-error-p nm))
+              (progn
+                (setq ss (vl-catch-all-apply 'ssget
+                           (list "X" (list '(0 . "INSERT") (cons 410 nm)))))
+                (if (vl-catch-all-error-p ss) (setq ss nil))
+                (if ss
+                  (progn
+                    (setq j 0)
+                    (while (< j (sslength ss))
+                      (setq ent (ssname ss j))
+                      (setq nblk (1+ nblk))
+                      (setq tke:allrefs (cons ent tke:allrefs))
+                      (setq L (tke:probe ent))
+                      (if L
+                        (progn
+                          (setq nattr (1+ nattr))
+                          (if (null tags) (setq tags (mapcar 'car L)))
+                          (if (tke:is-frame L)
+                            (setq hits (cons (cons ent L) hits)))))
+                      (setq j (1+ j)))))))))
         (setq i (1+ i)))))
-  (setq n (length hits))
+  (princ (strcat "\n      扫描：块参照 " (itoa nblk) " 个，带属性 " (itoa nattr)
+                 " 个，认出图框 " (itoa (length hits)) " 个"))
+  (if (= nattr 0)
+    (princ "\n      提示：没有带属性的块。图框可能不是「带属性的块」，或属性被做成了普通文字。"))
+  (if (and (= nattr 0) (> nblk 0))
+    (progn
+      (princ "\n      图纸里的块名：")
+      (setq i 0)
+      (foreach e (reverse tke:allrefs)
+        (if (< i 8) (princ (strcat " " (tke:blkname e))))
+        (setq i (1+ i)))))
+  (if (and (> nattr 0) (null hits) tags)
+    (progn
+      (princ "\n      带属性块里的标记：")
+      (setq i 0)
+      (foreach tg tags
+        (if (< i 14) (princ (strcat " " tg)))
+        (setq i (1+ i)))
+      (princ "\n      提示：里面没有「料号」或「图名」，图框模板和预期不一致。")))
+  (tke:sortx hits))
+
+;; ---------- 手动点选（点属性文字 / 点框线都能认出来） ----------
+(defun tke:pick (/ r ent tp e2 best bd pt ip d)
+  (initget "A")
+  (setq r (entsel "\n      点选图框（点在块上；A=取消）: "))
   (cond
-    ((= n 1) (car hits))
-    ((> n 1)
-     (princ (strcat "\n      图纸里有 " (itoa n)
-                    " 个带属性的图框，请点选要编辑的那一个: "))
-     (setq ent (car (entsel)))
-     (if (tke:ok ent) ent nil))
+    ((null r) nil)
+    ((= (type r) 'STR) nil)
     (T
-     (princ "\n      没自动找到图框（块里要有「料号」或「图名」属性）。请点选图框: ")
-     (setq ent (car (entsel)))
-     (if (tke:ok ent) ent nil))))
+     (progn
+       (setq ent (car r) tp (cadr r))
+       (setq e2 (entget ent))
+       ;; 点到属性文字 -> 用它所属的块
+       (if (= (cdr (assoc 0 e2)) "ATTRIB")
+         (setq ent (cdr (assoc 330 e2))))
+       ;; 还不是块 -> 找插入点离点击点最近的那个块
+       (if (or (null ent) (null (entget ent))
+               (/= (cdr (assoc 0 (entget ent))) "INSERT"))
+         (progn
+           (setq pt (trans tp 1 0) best nil bd nil)
+           (foreach e tke:allrefs
+             (setq ip (tke:ipt e))
+             (setq d (+ (abs (- (car pt) (car ip))) (abs (- (cadr pt) (cadr ip)))))
+             (if (or (null bd) (< d bd)) (setq bd d best e)))
+           (setq ent best)))
+       (if (tke:probe ent) ent nil)))))
 
 ;; ---------- 角色 -> 属性下标 ----------
 ;; 同一标记可能有多个属性（「编号」有两处），先用值前缀认，认不出来再按出现次序取
-(defun tke:idx (tag hint occ / cands i k e)
+(defun tke:idx (L tag hint occ / cands i k e)
   (setq cands nil i 0)
-  (foreach e tke:list
+  (foreach e L
     (if (= (car e) tag) (setq cands (cons i cands)))
     (setq i (1+ i)))
   (setq cands (reverse cands))
@@ -109,34 +213,43 @@
       (if hint
         (foreach i cands
           (if (and (null k)
-                   (wcmatch (strcase (cadr (nth i tke:list)))
+                   (wcmatch (strcase (cadr (nth i L)))
                             (strcat (strcase hint) "*")))
             (setq k i))))
       (if (and (null k) (<= occ (length cands)))
         (setq k (nth (1- occ) cands)))
       k)))
 
-(defun tke:get (role / r k)
+(defun tke:get1 (L role / r k)
   (setq r (assoc role tke:roles))
-  (if r
+  (if (and r L)
     (progn
-      (setq k (tke:idx (nth 2 r) (nth 3 r) (nth 4 r)))
-      (if k (cadr (nth k tke:list)) nil))
+      (setq k (tke:idx L (nth 2 r) (nth 3 r) (nth 4 r)))
+      (if k (cadr (nth k L)) nil))
     nil))
 
-(defun tke:set (role val / r k e)
+(defun tke:set1 (L role val / r k e)
   (setq r (assoc role tke:roles))
-  (if r
+  (if (and r L)
     (progn
-      (setq k (tke:idx (nth 2 r) (nth 3 r) (nth 4 r)))
+      (setq k (tke:idx L (nth 2 r) (nth 3 r) (nth 4 r)))
       (if k
         (progn
-          (setq e (nth k tke:list))
+          (setq e (nth k L))
           (vl-catch-all-apply 'vla-put-textstring (list (nth 2 e) val))
           (setcar (cdr e) val)
           T)
         nil))
     nil))
+
+;; 读：以第一个图框为准；写：所有图框都写
+(defun tke:get (role) (tke:get1 tke:list role))
+
+(defun tke:set (role val / n)
+  (setq n 0)
+  (foreach f tke:frames
+    (if (tke:set1 (cdr f) role val) (setq n (1+ n))))
+  n)
 
 ;; ---------- 只有变化了才记进计划 ----------
 (defun tke:push (role label new / old)
@@ -175,17 +288,28 @@
     (T "")))
 
 ;; ---------- 显示当前值 ----------
-(defun tke:dump (/ old)
-  (princ (strcat "\n      图框块：" (tke:blkname tke:ent)
-                 "（共 " (itoa (length tke:list)) " 个属性）"))
-  (princ "\n      当前值：")
+(defun tke:dump (/ old i)
+  (setq i 1)
+  (foreach f tke:frames
+    (princ (strcat "\n      图框 " (itoa i) "：" (tke:blkname (car f))
+                   "（" (itoa (length (cdr f))) " 个属性）"))
+    (setq i (1+ i)))
+  (princ "\n      当前值（以第 1 个图框为准）：")
   (foreach r tke:roles
     (setq old (tke:get (car r)))
     (princ (strcat "\n        " (nth 1 r) " = "
                    (if (and old (/= old "")) old "（空）")))))
 
+;; ---------- 多图框时：共几页 / 第几页 按左右顺序自动编号 ----------
+(defun tke:autopage (/ n i)
+  (setq n (length tke:frames) i 1)
+  (foreach f (reverse tke:frames)
+    (tke:set1 (cdr f) "pg1" (itoa n))
+    (tke:set1 (cdr f) "pg2" (itoa i))
+    (setq i (1+ i))))
+
 ;; ---------- 主命令 ----------
-(defun c:TKE (/ ent num ans n old ug)
+(defun c:TKE (/ hits r ans num n old ug)
   (princ "\n")
   (princ "\n  ============== 图框属性编辑器（样品图） ==============")
   (princ "\n  只针对【样品图】的图框，量产图暂不支持。")
@@ -193,12 +317,29 @@
   (princ "\n     客户编号 KY-xxx   产品编号 样品-xxx   产品料号 01000xxx")
   (princ "\n  每一项直接回车 = 保持原值不变；Esc 随时取消。")
   (princ "\n  =====================================================")
-  (setq ent (tke:find))
-  (if (null ent)
+  (setq hits (tke:scan))
+  (setq tke:frames hits)
+  (setq n (length hits))
+  (cond
+    ((= n 0)
+     (princ "\n      没找到图框，改为点选: ")
+     (setq r (tke:pick))
+     (if r (setq hits (list (cons r (tke:probe r))))))
+    ((> n 1)
+     (princ (strcat "\n      找到 " (itoa n) " 个图框。"))
+     (princ "\n      [回车=全部一起改 / 点选=只改点中的那个 / A=取消]: ")
+     (setq r (tke:pick))
+     (if r
+       (progn
+         (princ "\n      只改点中的这一个。")
+         (setq hits (list (cons r (tke:probe r)))))
+       (princ (strcat "\n      全部 " (itoa n) " 个图框一起改。")))))
+  (if (or (null hits) (= (length hits) 0))
     (princ "\n已取消（没选到图框）。")
     (progn
-      (setq tke:ent ent)
-      (setq tke:list (tke:attrs ent))
+      (setq tke:frames hits)
+      (setq tke:multi (> (length hits) 1))
+      (setq tke:list (cdr (car hits)))
       (setq tke:plan nil)
       (tke:dump)
 
@@ -232,11 +373,14 @@
           (tke:push "qty" "样品数量" (tke:ask "qty" "样品数量"))
           (tke:push "ver" "版本" (tke:ask "ver" "版本"))
           (tke:push "dat" "图纸日期" (tke:ask "dat" "图纸日期"))
-          (tke:push "pg1" "共几页" (tke:ask "pg1" "共几页"))
-          (tke:push "pg2" "第几页" (tke:ask "pg2" "第几页"))))
+          (if tke:multi
+            (princ "\n      多个图框：共几页 / 第几页 将按左右顺序自动编号，不再单独问。")
+            (progn
+              (tke:push "pg1" "共几页" (tke:ask "pg1" "共几页"))
+              (tke:push "pg2" "第几页" (tke:ask "pg2" "第几页"))))))
 
       ;; ---- 预览 + 确认 ----
-      (if (null tke:plan)
+      (if (and (null tke:plan) (not tke:multi))
         (princ "\n      没有任何字段需要修改，未做改动。")
         (progn
           (setq n (length tke:plan))
@@ -246,7 +390,14 @@
                            "   （原 "
                            (if (and (nth 3 p) (/= (nth 3 p) "")) (nth 3 p) "空")
                            "）")))
+          (if tke:multi
+            (progn
+              (princ (strcat "\n        共几页 = " (itoa (length tke:frames))))
+              (princ (strcat "\n        第几页 = 按左右顺序自动编号 1 ~ "
+                             (itoa (length tke:frames))))))
           (princ "\n      ------------------------------")
+          (if tke:multi
+            (princ (strcat "\n      将写入 " (itoa (length tke:frames)) " 个图框。")))
           (initget "N")
           (setq ans (getkword "\n      确认写入？[回车=写入 / N=取消]: "))
           (if (and ans (= ans "N"))
@@ -256,10 +407,13 @@
               (setq ug (vl-catch-all-apply 'command (list "_.UNDO" "_BEgin")))
               (foreach p (reverse tke:plan)
                 (tke:set (car p) (nth 2 p)))
+              (if tke:multi (tke:autopage))
               (if (not (vl-catch-all-error-p ug))
                 (vl-catch-all-apply 'command (list "_.UNDO" "_End")))
-              (princ (strcat "\n      已写入 " (itoa n)
-                             " 项。按 U 可整体撤销。"))))))))
+              (princ (strcat "\n      已写入 " (itoa n) " 项"
+                             (if tke:multi
+                               (strcat "，共 " (itoa (length tke:frames)) " 个图框") "")
+                             "。按 U 可整体撤销。"))))))))
   (princ))
 
 (defun c:BKE () (c:TKE))

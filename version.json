@@ -17,6 +17,7 @@
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
+    "CHANGELOG.md": "b726d37b59f783857cef25391f3d38bebbbec8bcd98a6f5d72ee796aef685b43",
     "README.md": "b5874802043e3a77cd10e22ff16c3c2a68e842eb20dbdc4adc18e408e53c0d70",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "ad3363d8c0572584d832f83c21271c8500048bc839ae443bc7ef7d6a10ef6679",

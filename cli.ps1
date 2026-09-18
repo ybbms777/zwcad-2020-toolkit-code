@@ -1,7 +1,7 @@
-﻿param([ValidateSet('dimensions','trim','extend','tolerance','symbols','font','dimline','all','fonts')][string]$Choice)
+﻿param([ValidateSet('dimensions','trim','extend','tolerance','symbols','font','dimline','frame','all','fonts')][string]$Choice)
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
-$names=@{dimensions='智能标注';trim='快速修剪';extend='快速延伸';tolerance='几何公差';symbols='机械符号';font='改字体';dimline='标注线属性'}
+$names=@{dimensions='智能标注';trim='快速修剪';extend='快速延伸';tolerance='几何公差';symbols='机械符号';font='改字体';dimline='标注线属性';frame='标题框缩放'}
 # CJK glyphs render 2 columns wide in the console; ASCII renders 1. Pad by
 # visual width, not .NET string length, so centered text always lines up.
 #
@@ -46,10 +46,10 @@ function Get-KitVersion {
     }
     return '1.2'
 }
-$allModules=@('dimensions','trim','extend','tolerance','symbols','font','dimline')
+$allModules=@('dimensions','trim','extend','tolerance','symbols','font','dimline','frame')
 # Weights are cosmetic only -- they shape how long the progress bar runs,
 # not the actual (near-instant) install work.
-$weights=@{dimensions=3;trim=3;extend=3;tolerance=1;symbols=2;font=4;dimline=3}
+$weights=@{dimensions=3;trim=3;extend=3;tolerance=1;symbols=2;font=4;dimline=3;frame=1}
 $stages=@(
     @{Max=12;Text='正在检查安装环境'},
     @{Max=32;Text='正在部署插件模块'},
@@ -170,28 +170,34 @@ function Show-Menu {
     Write-Host '    [7] 机械符号        ' -NoNewline -ForegroundColor Yellow
     Write-Host 'FH，沉孔·深度·直径·沉头，ZGDT 符号字体' -ForegroundColor Gray
     Write-Host ''
-    Write-Host '    [8] 全部安装        ' -NoNewline -ForegroundColor Green
+    Write-Host '   图纸整理' -ForegroundColor White
+    Write-Host '    [8] 标题框缩放      ' -NoNewline -ForegroundColor Yellow
+    Write-Host 'TK，图框按零件尺寸自动缩放并居中（可手输尺寸或框选自动量）' -ForegroundColor Gray
+    Write-Host ''
+    Write-Host '    [9] 全部安装        ' -NoNewline -ForegroundColor Green
     Write-Host '★ 推荐 — 一次装齐以上全部功能' -ForegroundColor Green
-    Write-Host '    [9] 字体安装        ' -NoNewline -ForegroundColor Yellow
+    Write-Host '    [10] 字体安装       ' -NoNewline -ForegroundColor Yellow
     Write-Host '宋体/黑体/仿宋/楷体/华文细黑等，独立于插件功能' -ForegroundColor Gray
     Write-Host '    [0] 退出' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '   可多选，用逗号分隔，例如 1,2,5 或 8,9；本次选择替换上次选择。' -ForegroundColor DarkGray
-    Write-Host '   点选式 TR/EX/栏选删除(FE) 已内置于基础组件，无需单独选择；1-8 都含自动加载和平滑度 20000。' -ForegroundColor DarkGray
+    Write-Host '   可多选，用逗号分隔，例如 1,2,5 或 9,10；本次选择替换上次选择。' -ForegroundColor DarkGray
+    Write-Host '   点选式 TR/EX/栏选删除(FE) 已内置于基础组件，无需单独选择；1-9 都含自动加载和平滑度 20000。' -ForegroundColor DarkGray
 }
 if(-not $Choice){
     Show-Menu
     do {
         $inputValue=Read-Host "`n请输入编号"
         if($inputValue -eq '0'){exit 0}
-        $valid=$inputValue -match '^\s*[1-9](\s*[,，]\s*[1-9])*\s*$'
-        if(-not $valid){Write-Host '请输入 1-9，或用逗号分隔多个编号。' -ForegroundColor Yellow}
+        $valid=$inputValue -match '^\s*(10|[1-9])(\s*[,，]\s*(10|[1-9]))*\s*$'
+        if(-not $valid){Write-Host '请输入 1-10，或用逗号分隔多个编号。' -ForegroundColor Yellow}
     } until($valid)
     $numbers=@($inputValue -split '[,，]' | ForEach-Object {$_.Trim()})
-    $fontMode=$numbers -contains '9'
-    $modNumbers=@($numbers | Where-Object {$_ -ne '9'})
-    $numberMap=@{'1'='dimensions';'2'='trim';'3'='extend';'4'='tolerance';'5'='symbols';'6'='dimline';'7'='font'}
-    if($modNumbers -contains '8'){$selected=@($allModules)}
+    $fontMode=$numbers -contains '10'
+    $modNumbers=@($numbers | Where-Object {$_ -ne '10'})
+    # 编号必须和上面菜单显示一致：[5]改字体 [6]标注线属性 [7]机械符号 [8]标题框缩放
+    # （原来 5 和 7 是反的，选 [5]改字体 实际装的是机械符号）
+    $numberMap=@{'1'='dimensions';'2'='trim';'3'='extend';'4'='tolerance';'5'='font';'6'='dimline';'7'='symbols';'8'='frame'}
+    if($modNumbers -contains '9'){$selected=@($allModules)}
     else {$selected=@($modNumbers | ForEach-Object {$numberMap[$_]} | Where-Object {$_} | Select-Object -Unique)}
     if($fontMode){
         $picked=@(Select-KitFonts)

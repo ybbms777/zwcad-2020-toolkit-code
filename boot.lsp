@@ -27,7 +27,8 @@
     (or (not (member "tolerance" zwk:enabled)) c:GC)
     (or (not (member "symbols" zwk:enabled)) c:FH)
     (or (not (member "font" zwk:enabled)) c:ZF)
-    (or (not (member "dimline" zwk:enabled)) c:BZ)))
+    (or (not (member "dimline" zwk:enabled)) c:BZ)
+    (or (not (member "frame" zwk:enabled)) c:TK)))
 (defun zwk:enabled-str (/ s)
   (setq s "")
   (foreach zwk:e zwk:enabled (setq s (strcat s zwk:e " ")))
@@ -38,7 +39,7 @@
 (if (and zwk:root (findfile (strcat zwk:root "/modules.lsp")))
   (progn
     (command "_.NETLOAD" (strcat zwk:root "/bin/ZWKit.Core.102.dll"))
-    (setq zwk:enabled '("dimensions" "trim" "extend" "tolerance" "symbols" "font" "dimline"))
+    (setq zwk:enabled '("dimensions" "trim" "extend" "tolerance" "symbols" "font" "dimline" "frame"))
     (if (findfile (strcat zwk:root "/selection.lsp")) (load (strcat zwk:root "/selection.lsp")))
     (load (strcat zwk:root "/modules.lsp"))
     ;; EXD's Shift-drag reuses trim.lsp's zt:trim, so picking "extend" alone
@@ -56,7 +57,8 @@
                          ("modules/tolerance.lsp" . "tolerance")
                          ("modules/symbols.lsp" . "symbols")
                          ("modules/font.lsp" . "font")
-                         ("modules/dimline.lsp" . "dimline")))
+                         ("modules/dimline.lsp" . "dimline")
+                         ("modules/frame.lsp" . "frame")))
     (foreach zwk:m zwk:modules
       (setq zwk:key (cdr (assoc zwk:m zwk:modkeys)))
       (if (or (null zwk:key) (member zwk:key zwk:loadset))
@@ -72,6 +74,7 @@
     (if (not (member "symbols" zwk:enabled)) (setq c:FH nil))
     (if (not (member "font" zwk:enabled)) (setq c:ZF nil c:ZFD nil))
     (if (not (member "dimline" zwk:enabled)) (setq c:BZ nil c:BZD nil))
+    (if (not (member "frame" zwk:enabled)) (setq c:TK nil c:BTK nil))
     (zwk:smooth)
     (princ "\n工具包已按安装选项加载，用 ZWKCHECK 自检。"))
   (princ "\n工具包路径缺失，请重新一键安装。"))

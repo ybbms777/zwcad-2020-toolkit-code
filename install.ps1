@@ -80,7 +80,7 @@ try {
     }
     if($Selection) {
         $chosen=@($Selection.Split(',') | Select-Object -Unique)
-        $validKeys=@('dimensions','trim','extend','tolerance','symbols','font','dimline')
+        $validKeys=@('dimensions','trim','extend','tolerance','symbols','font','dimline','frame')
         if(@($chosen | Where-Object {$_ -notin $validKeys}).Count){throw '无效的模块选择。'}
         $config='(setq zwk:enabled ''('+ (($chosen | ForEach-Object {'"'+$_+'"'}) -join ' ') + '))'
         [IO.File]::WriteAllText((Join-Path $kitRoot 'selection.lsp'),$config,$enc)

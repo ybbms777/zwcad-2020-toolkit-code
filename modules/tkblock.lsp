@@ -313,8 +313,10 @@
       (if k
         (progn
           (setq e (nth k L))
+          ;; 只写磁盘，不动内存副本 —— 不能用 setcar，
+          ;; ZWCAD 的 LISP 没有这个函数（用户实测 Error: undefined function - SETCAR）。
+          ;; 写入流程里没有任何「写后再读」的需求，所以不需要回写内存。
           (tke:putval (nth 2 e) val)
-          (setcar (cdr e) val)
           T)
         nil))
     nil))
@@ -322,10 +324,13 @@
 ;; 读：以第一个图框为准；写：所有图框都写
 (defun tke:get (role) (tke:get1 tke:list role))
 
-(defun tke:set (role val / n)
+;; 每个属性单独包 catch-all：一个写失败不能把整批写入中断，
+;; 否则后面的属性全丢，而且 UNDO _End 也执行不到，用户的选择集会被留在未结束的组里。
+(defun tke:set (role val / n f r)
   (setq n 0)
   (foreach f tke:frames
-    (if (tke:set1 (cdr f) role val) (setq n (1+ n))))
+    (setq r (vl-catch-all-apply 'tke:set1 (list (cdr f) role val)))
+    (if (and (not (vl-catch-all-error-p r)) r) (setq n (1+ n))))
   n)
 
 ;; ---------- 只有变化了才记进计划 ----------
@@ -378,15 +383,18 @@
                    (if (and old (/= old "")) old "（空）")))))
 
 ;; ---------- 多图框时：共几页 / 第几页 按左右顺序自动编号 ----------
-(defun tke:autopage (/ n i)
-  (setq n (length tke:frames) i 1)
+(defun tke:autopage (/ n i c r)
+  (setq n (length tke:frames) i 1 c 0)
   (foreach f (reverse tke:frames)
-    (tke:set1 (cdr f) "pg1" (itoa n))
-    (tke:set1 (cdr f) "pg2" (itoa i))
-    (setq i (1+ i))))
+    (setq r (vl-catch-all-apply 'tke:set1 (list (cdr f) "pg1" (itoa n))))
+    (if (and (not (vl-catch-all-error-p r)) r) (setq c (1+ c)))
+    (setq r (vl-catch-all-apply 'tke:set1 (list (cdr f) "pg2" (itoa i))))
+    (if (and (not (vl-catch-all-error-p r)) r) (setq c (1+ c)))
+    (setq i (1+ i)))
+  c)
 
 ;; ---------- 主命令 ----------
-(defun c:TKE (/ hits r ans num n old ug)
+(defun c:TKE (/ hits r ans num n old ug nw ne)
   (princ "\n")
   (princ "\n  ============== 图框属性编辑器（样品图） ==============")
   (princ "\n  只针对【样品图】的图框，量产图暂不支持。")
@@ -482,15 +490,23 @@
             (progn
               ;; 全部改动合成一步，按一次 U 就能整体撤销
               (setq ug (vl-catch-all-apply 'command (list "_.UNDO" "_BEgin")))
+              (setq nw 0)
               (foreach p (reverse tke:plan)
-                (tke:set (car p) (nth 2 p)))
-              (if tke:multi (tke:autopage))
+                (setq nw (+ nw (tke:set (car p) (nth 2 p)))))
+              (setq ne (* (length tke:plan) (length tke:frames)))
+              (if tke:multi
+                (progn
+                  (setq nw (+ nw (tke:autopage)))
+                  (setq ne (+ ne (* 2 (length tke:frames))))))
               (if (not (vl-catch-all-error-p ug))
                 (vl-catch-all-apply 'command (list "_.UNDO" "_End")))
-              (princ (strcat "\n      已写入 " (itoa n) " 项"
+              (princ (strcat "\n      已写入 " (itoa nw) " / " (itoa ne) " 个属性值"
                              (if tke:multi
                                (strcat "，共 " (itoa (length tke:frames)) " 个图框") "")
-                             "。按 U 可整体撤销。"))))))))
+                             "。按 U 可整体撤销。"))
+              (if (< nw ne)
+                (princ (strcat "\n      警告：有 " (itoa (- ne nw))
+                               " 个属性没写成功，请检查。")))))))))
   (princ))
 
 (defun c:BKE () (c:TKE))

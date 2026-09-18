@@ -61,9 +61,10 @@
   out)
 
 ;; 把矩形裁到 R 里面；完全不相交返回 nil
-(defun tk:clip (r R / x1 y1 x2 y2)
-  (setq x1 (max (tk:rx1 r) (tk:rx1 R)) y1 (max (tk:ry1 r) (tk:ry1 R)))
-  (setq x2 (min (tk:rx2 r) (tk:rx2 R)) y2 (min (tk:ry2 r) (tk:ry2 R)))
+;; 注意：AutoLISP 符号名不区分大小写，(r R ...) 会被当成重名报「参数名重复」
+(defun tk:clip (rect box / x1 y1 x2 y2)
+  (setq x1 (max (tk:rx1 rect) (tk:rx1 box)) y1 (max (tk:ry1 rect) (tk:ry1 box)))
+  (setq x2 (min (tk:rx2 rect) (tk:rx2 box)) y2 (min (tk:ry2 rect) (tk:ry2 box)))
   (if (or (>= x1 x2) (>= y1 y2)) nil (list (list x1 y1 0.0) (list x2 y2 0.0))))
 
 (defun tk:boxinfo (bb / a b)

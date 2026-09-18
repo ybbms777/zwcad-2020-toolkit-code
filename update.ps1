@@ -163,6 +163,13 @@ if ($failed.Count) {
     exit 1
 }
 Say ('  更新完成：' + $done + ' 个文件，已升级到 ' + $manifest.version) 'Green'
+if ($manifest.notes) {
+    Write-Host ''
+    Say ('  本次更新内容（' + $manifest.version + '）:') 'Cyan'
+    # PowerShell 5.1 的 ConvertTo-Json 会把只有一条的数组写成字符串，用 @() 归一化
+    foreach ($n in @($manifest.notes)) { Say ('    - ' + $n) 'Gray' }
+    Write-Host ''
+}
 Say '  重新打开中望 CAD 即可生效。' 'Green'
 if (Test-Path -LiteralPath $backupDir) { Say ('  旧版备份: ' + $backupDir) 'DarkGray' }
 Write-Host ''

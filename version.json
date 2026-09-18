@@ -1,6 +1,17 @@
 {
-  "version": "1.2.0",
-  "date": "2026-09-18 11:53",
+  "version": "1.2.1",
+  "date": "2026-09-18 12:00",
+  "fontVersion": "2026.09.18",
+  "fontsHash": "e4d4dc0bce7b9f946600cc85a93f50ccd72ee3850c690ed3d715fff3368365e6",
+  "notes": [
+    "新增云更新：双击 更新.cmd 即可升级，只下载发生变化的文件（通常几十 KB），无需重新发压缩包、无需重新安装",
+    "新增 发布.cmd / publish.ps1：一键重算文件指纹、推送到公开与私密两个仓库、并重打完整包",
+    "新增版本清单 version.json：记录每个文件的 sha256、字体版本号、本版更新说明",
+    "修复 CLI 标题框在 cmd.exe 里右侧错位（框线字符在 GBK 控制台占 2 列，改用纯 ASCII 边框）",
+    "修复字体列表把小于 50 KB 的字体显示成 0.0 MB（改为按 B / KB / MB 自动选单位）",
+    "补齐缺失字体 bigfont.shx（日文大字库，3664 字形，已解析验证）",
+    "修复 fonts\\字体说明.txt 混合编码导致的乱码，改为 UTF-8 with BOM"
+  ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
@@ -21,11 +32,11 @@
     "modules/symbols.lsp": "c57b9bcab8f3121bfa14879a32d417466d7903685ed3f8776851dba8f561dc0c",
     "modules/tolerance.lsp": "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
     "modules/trim.lsp": "8fbfb20c587da172766bce4c74507ec0819a49972166822ee1c2b2c1118b7320",
-    "publish.ps1": "c2ec3cd3c1eadee7fc2aa527bb8f3b20699813ced4dcf82f987ced85fa8d7561",
+    "publish.ps1": "f3e586d51a896d78bfea55defb7e51cec03442d3109fb291d4a345b0700b665c",
     "src/Bridge.cs": "559a3816a40df82a771b321c3b1d3a96a328eccc41c449a590751eb70712e998",
     "src/Mouse.cs": "ea06aed49b6b1e746d8eb5ed4474c0c19c60213d58a8db06d32af2b4c7a85b34",
     "src/build.ps1": "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
-    "update.ps1": "3a2d865f4590c45ad7798b84e6a0e62ad2dc23bfadfab4519c186bc7d66efd7b",
+    "update.ps1": "957adee06b439d1064470f0694e464402419d57c16353586842bc2d7064b0fb3",
     "一键安装.cmd": "7779c1f386380627d542a076b81371c2c2d2ad7fe1fa7b41e33eef91bf30d917",
     "使用说明.md": "ee7e1bea71d4f7f2ed0d824ce5cabb02c1f6d56a2c148021bc7f899e592df508",
     "发布.cmd": "0091f3ebfd316933c8a566df5e59105c0c624a321e6e3773200d4f549d7ad385",

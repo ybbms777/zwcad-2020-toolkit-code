@@ -13,6 +13,7 @@
 
 (setq tk:boxents nil)
 (setq tk:mL 0.0 tk:mR 0.0 tk:mB 0.0 tk:mT 0.0)
+(setq tk:fill nil)   ;; T = 本次执行用非等比缩放强制填满
 ;; 命令开始时保存的系统变量原值，出错或结束时一定恢复
 (setq tk:os0 nil tk:ce0 nil)
 (setq tk:cands nil)   ;; 可用区候选矩形（遮挡物切出来的所有空矩形）
@@ -270,16 +271,22 @@
 
 ;; 从候选里挑「装下这个零件所需缩放系数最小」的那个 —— 框最小、留白最少。
 ;; 系数相同就取面积大的。
-(defun tk:pickrect (cands pw ph / best bs ba r i s ar)
-  (setq best nil bs nil ba -1.0)
+;; 从候选可用区里挑「装这个零件留白最少」的那块。
+;; 注意：不能只挑「缩放系数最小」——缩放最小只代表框大，
+;; 长宽比不对的话框越大留白越多。要按填充率挑。
+(defun tk:pickrect (cands pw ph / best bf ba r i s w h f a)
+  (setq best nil bf -1.0 ba 1.0e99)
   (foreach r cands
     (setq i (tk:boxinfo r))
     (if (and i (> (car i) 0.0) (> (cadr i) 0.0))
       (progn
         (setq s (max (/ (+ pw tk:mL tk:mR) (car i)) (/ (+ ph tk:mB tk:mT) (cadr i))))
-        (setq ar (* (car i) (cadr i)))
-        (if (or (null bs) (< s bs) (and (equal s bs 1e-9) (> ar ba)))
-          (setq bs s ba ar best r)))))
+        (setq w (* s (car i)) h (* s (cadr i)))
+        ;; 填充率 = 零件面积 / 缩放后可用区面积。越大 = 四边留白越少
+        (setq f (/ (* pw ph) (* w h)))
+        (setq a (* w h))
+        (if (or (null best) (> f bf) (and (equal f bf 1e-9) (< a ba)))
+          (setq bf f ba a best r)))))
   best)
 
 (defun tk:parse2 (s / i c buf res)
@@ -440,8 +447,16 @@
                 (if (null pT)
                   (setq r 'cancel)
                   (progn
-                    (setq mn (list (min (car pL) (car pR)) (min (cadr pB) (cadr pT)) 0.0))
-                    (setq mx (list (max (car pL) (car pR)) (max (cadr pB) (cadr pT)) 0.0))
+                    ;; 取 4 个点在 X / Y 两个方向上的真实最小 / 最大。
+                    ;; 原来只用「最左/最右」定 X、「最下/最上」定 Y ——
+                    ;; 视图或 UCS 一旦有旋转，这两个方向就对不上，
+                    ;; 算出的框会偏小或错位（用户实测：框没贴住零件）。
+                    (setq mn (list (min (car pL) (car pR) (car pB) (car pT))
+                                   (min (cadr pL) (cadr pR) (cadr pB) (cadr pT))
+                                   0.0))
+                    (setq mx (list (max (car pL) (car pR) (car pB) (car pT))
+                                   (max (cadr pL) (cadr pR) (cadr pB) (cadr pT))
+                                   0.0))
                     (setq i (tk:boxinfo (list mn mx)))
                     (tk:rect mn mx)
                     (tk:mark-edge mn mx (/ (max (car i) (cadr i)) 80.0))
@@ -546,6 +561,7 @@
       (tk:rectc (car best) (cadr best) 5)
       (princ (strcat "\n      已按零件尺寸从 " (itoa (length tk:cands))
                      " 个候选里挑出最合适的可用区 " (tk:num uw) " x " (tk:num uh)))))
+  (setq tk:fill nil)
   (while (not done)
     (setq s (tk:calc uw uh pw ph mode))
     (princ "\n")
@@ -554,16 +570,51 @@
     (princ (strcat "\n      余量 mm   上 " (tk:num tk:mT) " 下 " (tk:num tk:mB)
                    " 左 " (tk:num tk:mL) " 右 " (tk:num tk:mR)))
     (princ (strcat "\n      缩放系数  " (tk:num s) "   [" (if (= mode "std") "标准比例" "精确贴合") "]"))
-    (initget "S M")
-    (setq kw (getkword "\n      [回车=执行 / S=切标准比例 / M=重设余量 / Esc=取消]: "))
+    ;; 留白报告：图框和零件的长宽比不同时，等比缩放必然有一个方向留空。
+    ;; 把具体数字打出来，用户一眼就能看到空白在哪、有多少。
+    (setq w2 (* s uw) h2 (* s uh))
+    (setq bx (- w2 pw tk:mL tk:mR) by (- h2 ph tk:mB tk:mT))
+    (princ (strcat "\n      缩放后可用区 " (tk:num w2) " x " (tk:num h2)))
+    (if (> bx 0.001)
+      (princ (strcat "\n      左右各余 " (tk:num (/ bx 2.0)) " mm（合计 " (tk:num bx) "）"))
+      (princ "\n      左右贴紧"))
+    (if (> by 0.001)
+      (princ (strcat "\n      上下各余 " (tk:num (/ by 2.0)) " mm（合计 " (tk:num by) "）"))
+      (princ "\n      上下贴紧"))
+    (if (> (max bx by) (* 0.15 (max w2 h2)))
+      (princ "\n      提示：留白偏多。可回第 3 步圈出长宽比更接近零件的可用区，或按 F 强制填满"))
+    (initget "S M F")
+    (setq kw (getkword "\n      [回车=执行 / S=切标准比例 / M=重设余量 / F=强制填满 / Esc=取消]: "))
     (cond
       ((= kw "S") (setq mode (if (= mode "exact") "std" "exact")))
       ((= kw "M") (tk:ask-margins))
+      ((= kw "F")
+       (princ "\n      强制填满：图框按 X / Y 分别缩放，四边零留白。")
+       (princ "\n      注意：图框上的文字、圆、箭头会被拉变形，执行后请检查。")
+       (setq tk:fill T done T))
       (T (setq done T))))
   s)
 
 ;; ---------- 执行：缩放 + 按四边余量精确落位 ----------
-(defun tk:apply (ss u p s / uw uh uctr pw ph pctr base uc2 uw2 uh2 plx pby tx ty delta old gx gy)
+;; 非等比缩放（强制填满）：用变换矩阵，任意对象类型都能做。
+;; 等比缩放做不到「四边零留白」——图框和零件的长宽比不同，等比必然有一边留空。
+(defun tk:scale-xy (ss base sx sy / i ent obj mat tx ty r ok)
+  (setq tx (* (car base) (- 1.0 sx)) ty (* (cadr base) (- 1.0 sy)))
+  (setq mat (vlax-tmatrix
+              (list (list sx 0.0 0.0 0.0)
+                    (list 0.0 sy 0.0 0.0)
+                    (list 0.0 0.0 1.0 0.0)
+                    (list tx ty 0.0 1.0))))
+  (setq i 0 ok T)
+  (while (< i (sslength ss))
+    (setq ent (ssname ss i))
+    (setq obj (vlax-ename->vla-object ent))
+    (setq r (vl-catch-all-apply 'vla-transformby (list obj mat)))
+    (if (vl-catch-all-error-p r) (setq ok nil))
+    (setq i (1+ i)))
+  ok)
+
+(defun tk:apply (ss u p s / uw uh uctr pw ph pctr base uc2 uw2 uh2 sx sy plx pby tx ty delta old gx gy)
   (tk:erase-box)
   (setq uw (car u) uh (cadr u) uctr (caddr u))
   (setq pw (car p) ph (cadr p) pctr (caddr p))
@@ -573,29 +624,38 @@
       (setq base uctr)
       (setq old (getvar "CMDECHO"))
       (setvar "CMDECHO" 0)
-      (command "_.SCALE" ss "" (tk:w2u base) s)
-      ;; 缩放后可绘图区中心 = base + s*(uctr - base)
-      (setq uc2 (list (+ (car base) (* s (- (car uctr) (car base))))
-                      (+ (cadr base) (* s (- (cadr uctr) (cadr base))))
-                      0.0))
-      (if pctr
+      (if tk:fill
         (progn
+          ;; 强制填满：可用区正好变成「零件 + 余量」，四边零留白
+          (setq sx (/ (+ pw tk:mL tk:mR) uw) sy (/ (+ ph tk:mB tk:mT) uh))
+          (if (not (tk:scale-xy ss base sx sy))
+            (princ "\n      警告：部分对象非等比缩放失败（可能是旋转过的块），位置可能不准。"))
+          (setq uw2 (* uw sx) uh2 (* uh sy))
+          (setq gx 0.0 gy 0.0))
+        (progn
+          (command "_.SCALE" ss "" (tk:w2u base) s)
           (setq uw2 (* s uw) uh2 (* s uh))
-          ;; 零件左下角
-          (setq plx (- (car pctr) (/ pw 2.0)) pby (- (cadr pctr) (/ ph 2.0)))
           ;; 余量之外还有富余空间（可用区和零件长宽比不同必然有），
           ;; 平分成两半放到对边，避免「一边贴死、另一边大量留白」
           (setq gx (/ (- uw2 pw tk:mL tk:mR) 2.0))
           (setq gy (/ (- uh2 ph tk:mB tk:mT) 2.0))
           (if (< gx 0.0) (setq gx 0.0))
-          (if (< gy 0.0) (setq gy 0.0))
+          (if (< gy 0.0) (setq gy 0.0))))
+      ;; 以 base 为基点缩放，可用区中心不动
+      (setq uc2 base)
+      (if pctr
+        (progn
+          (setq plx (- (car pctr) (/ pw 2.0)) pby (- (cadr pctr) (/ ph 2.0)))
           ;; 目标：可用区左边 = 零件左边 - 左余量 - 平分富余；下边同理
           (setq tx (+ (- plx tk:mL gx) (/ uw2 2.0)))
           (setq ty (+ (- pby tk:mB gy) (/ uh2 2.0)))
           (setq delta (list (- tx (car uc2)) (- ty (cadr uc2)) 0.0))
           (command "_.MOVE" ss "" (tk:w2u (list 0.0 0.0 0.0)) (tk:w2u delta))))
       (setvar "CMDECHO" old)
-      (princ (strcat "\n      完成：图框缩放 " (tk:num s) " 倍，已按余量套到零件上（零件未动）。可 U 撤销。"))
+      (if tk:fill
+        (princ (strcat "\n      完成：图框已按 X " (tk:num sx) " / Y " (tk:num sy)
+                       " 非等比缩放填满零件（零件未动）。可 U 撤销。"))
+        (princ (strcat "\n      完成：图框缩放 " (tk:num s) " 倍，已按余量套到零件上（零件未动）。可 U 撤销。")))
       T)))
 
 ;; ---------- 主命令 ----------

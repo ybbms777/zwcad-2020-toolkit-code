@@ -1,19 +1,17 @@
 {
-  "version": "1.2.25",
-  "date": "2026-09-19 08:28",
+  "version": "1.2.26",
+  "date": "2026-09-19 08:37",
   "fontVersion": "2026.09.18",
   "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "TKE 样品数量改为只输数字：输入 3 自动写回 3pcs。默认值显示时会剥掉 pcs 后缀，非纯数字会提示重输",
-    "TKE 移除「图纸日期」：本命令不再修改日期（角色表和提问流程都已去掉）",
-    "TKE 字段提问改为走一张表（tke:asks），以后增删字段只改这一处"
+    "同步 使用说明.md：样品数量的提示改为「只输数字，单位 pcs」（输入 5 写回 5pcs），并移除已去掉的图纸日期那一行（1.2.25 改了代码但漏改文档）"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "f1f5a326111b95d9028aca6f3e7c5757b022b5dd62a52f04a05c60e5de617f9c",
+    "CHANGELOG.md": "824e4189a3cef5b36cfdc03d31b78d3714fcb1d55666feac9d4d736f272a9071",
     "README.md": "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "069f64794cbba21c528bddff85fe8fd0d26cd2266569e65df252956f2d4cc2c5",
@@ -36,7 +34,7 @@
     "src/build.ps1": "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
     "update.ps1": "957adee06b439d1064470f0694e464402419d57c16353586842bc2d7064b0fb3",
     "一键安装.cmd": "7779c1f386380627d542a076b81371c2c2d2ad7fe1fa7b41e33eef91bf30d917",
-    "使用说明.md": "b9c83a5f2bff33960e2dfef626addc532da2648722c97fab252317260983a502",
+    "使用说明.md": "c5115e87435f6adf3cd3826f22e9e896ab36275e7ea2d59b1bc784dc38229af6",
     "取消自动加载.cmd": "3a638a469aa3b91d6f4280f7a7df784d96468a8a43be04936a10b0ee0892adef",
     "更新.cmd": "b9ab8d094902b6bf2f8c5f9fa5e12c4039e97e33da297f0577ffa818bae900e1"
   }

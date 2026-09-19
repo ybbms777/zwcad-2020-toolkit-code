@@ -1,5 +1,5 @@
 @echo off
-title ZWCAD å·¥å…·åŒ… - äº‘æ›´æ–°
+title ZWCAD ¹¤¾ß°ü - ÔÆ¸üÐÂ
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1"
 echo.
 pause

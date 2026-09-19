@@ -34,9 +34,35 @@
   (setq s "")
   (foreach zwk:e zwk:enabled (setq s (strcat s zwk:e " ")))
   (if (= s "") "无" s))
-(defun c:ZWKCHECK ()
-  (princ (strcat "\n工具包 1.2，自检模块=" (if (zwk:ready) "就绪" "未就绪")
-    "，平滑度=" (itoa (zwk:smooth-value)) "，已启用：" (zwk:enabled-str))) (princ))
+;; 从 version.json 读版本号（纯字符串扫描，不用 VL 函数；任何异常都回退 "1.2"）。
+;; version.json 里该行格式固定为：  "version": "1.2.28",
+(defun zwk:ver (/ f ln v i n done)
+  (setq v nil done nil)
+  (setq f (vl-catch-all-apply 'open (list (strcat zwk:root "/version.json") "r")))
+  (if (and (not (vl-catch-all-error-p f)) f)
+    (progn
+      (while (and (not done) (setq ln (read-line f)))
+        (if (wcmatch ln "*\"version\":*")
+          (progn
+            (setq n (strlen ln) i n)
+            (while (and (> i 0) (/= (substr ln i 1) "\"")) (setq i (1- i)))
+            (if (> i 0)
+              (progn
+                (setq n (1- i) v "")
+                (while (and (> n 0) (/= (substr ln n 1) "\""))
+                  (setq v (strcat (substr ln n 1) v) n (1- n)))))
+            (setq done T))))
+      (close f)))
+  (if (and v (/= v "")) v "1.2"))
+
+(defun c:ZWKCHECK (/ sv)
+  ;; 平滑度必须判空再 itoa：DLL 没加载时 zwk:smooth-value 返回 nil，
+  ;; 直接 (itoa nil) 会报错 —— 而用户敲这条命令往往正是为了排查「插件没加载」（1.2.28 修的）。
+  (setq sv (vl-catch-all-apply 'zwk:smooth-value nil))
+  (if (vl-catch-all-error-p sv) (setq sv nil))
+  (princ (strcat "\n工具包 " (zwk:ver) "，自检模块=" (if (zwk:ready) "就绪" "未就绪")
+    "，平滑度=" (if (numberp sv) (itoa sv) "未知") "，已启用：" (zwk:enabled-str)))
+  (princ))
 (if (and zwk:root (findfile (strcat zwk:root "/modules.lsp")))
   (progn
     (command "_.NETLOAD" (strcat zwk:root "/bin/ZWKit.Core.102.dll"))

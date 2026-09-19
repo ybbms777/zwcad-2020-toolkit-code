@@ -34,10 +34,23 @@
 (defun tk:u2w (p) (trans p 1 0))
 
 ;; ---------- 包围盒 ----------
-(defun tk:ebbox (e / o mn mx)
-  (setq o (vlax-ename->vla-object e))
-  (vla-getboundingbox o 'mn 'mx)
-  (list (vlax-safearray->list mn) (vlax-safearray->list mx)))
+;; 每一步都包 catch-all：单个对象取不到包围盒时返回 nil，
+;; 不让它把整批框选（tk:ssbox）拖垮（1.2.28 加固）。
+(defun tk:ebbox (e / o mn mx r1 r2)
+  (setq mn nil mx nil)
+  (setq o (vl-catch-all-apply 'vlax-ename->vla-object (list e)))
+  (if (vl-catch-all-error-p o)
+    nil
+    (progn
+      (vl-catch-all-apply 'vla-getboundingbox (list o 'mn 'mx))
+      (if (or (null mn) (null mx))
+        nil
+        (progn
+          (setq r1 (vl-catch-all-apply 'vlax-safearray->list (list mn)))
+          (setq r2 (vl-catch-all-apply 'vlax-safearray->list (list mx)))
+          (if (or (vl-catch-all-error-p r1) (vl-catch-all-error-p r2))
+            nil
+            (list r1 r2)))))))
 
 (defun tk:ssbox (ss / i e bb mn mx a b)
   (setq i 0 mn nil mx nil)
@@ -515,9 +528,21 @@
   (if (null pL) (tk:part-select) (tk:part-points pL)))
 
 ;; ---------- [5/5] 尺寸 -> 余量 -> 预览确认 ----------
-(defun tk:ask-mm (msg dflt / s)
+;; 余量输入：只接受非负数字，非法输入回退默认值。
+;; 原来 (atof "abc") = 0.0 且判了非空就返回，会让余量静默变成 0，
+;; 用户以为设了余量其实没设（1.2.28 修的）。
+(defun tk:ask-mm (msg dflt / s v ok i c)
   (setq s (getstring msg))
-  (if (and s (/= s "")) (atof s) dflt))
+  (if (or (null s) (= s ""))
+    dflt
+    (progn
+      (setq ok T i 1)
+      (while (and ok (<= i (strlen s)))
+        (setq c (substr s i 1))
+        (if (not (or (wcmatch c "#") (= c "."))) (setq ok nil))
+        (setq i (1+ i)))
+      (setq v (atof s))
+      (if (and ok (numberp v) (>= v 0.0)) v dflt))))
 
 (defun tk:ask-margins (/ s)
   (setq s (getstring "\n      要留余量吗？[回车=不留（零件贴边）/ Y=留（按 mm 分上下左右设）]: "))
@@ -608,9 +633,14 @@
   (setq i 0 ok T)
   (while (< i (sslength ss))
     (setq ent (ssname ss i))
-    (setq obj (vlax-ename->vla-object ent))
-    (setq r (vl-catch-all-apply 'vla-transformby (list obj mat)))
-    (if (vl-catch-all-error-p r) (setq ok nil))
+    ;; 转 VLA 对象也要包 catch-all：某个实体转不过去时不能中断整批，
+    ;; 否则图框会停在「一部分已变换、一部分没变」的不一致状态（1.2.28 加固）。
+    (setq obj (vl-catch-all-apply 'vlax-ename->vla-object (list ent)))
+    (if (vl-catch-all-error-p obj)
+      (setq ok nil)
+      (progn
+        (setq r (vl-catch-all-apply 'vla-transformby (list obj mat)))
+        (if (vl-catch-all-error-p r) (setq ok nil))))
     (setq i (1+ i)))
   ok)
 

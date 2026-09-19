@@ -250,8 +250,11 @@
   (initget "A")
   (setq r (entsel "\n      点选图框（点在块上；A=取消）: "))
   (cond
+    ;; 回车 -> nil（含义由调用方决定：多图框时表示「全部一起改」）
+    ;; 按 A -> 'cancel（明确取消）
+    ;; 两者必须区分：原来都返回 nil，导致提示里的「A=取消」失效（1.2.28 修的）。
     ((null r) nil)
-    ((= (type r) 'STR) nil)
+    ((= (type r) 'STR) 'cancel)
     (T
      (progn
        (setq ent (car r) tp (cadr r))
@@ -293,19 +296,25 @@
         (setq k (nth (1- occ) cands)))
       k)))
 
-;; 写一个属性的值：属性实体是实体名就走 entmod，是 VLA 对象就走 vla-put
-(defun tke:putval (e val / d a)
+;; 写一个属性的值。返回 T = 写成功，nil = 写失败。
+;; 必须给出明确结果：entmod 写失败只返回 nil（不抛异常），
+;; 不判断的话「已写入 N / M 个属性值」里的 N 会虚高，用户以为全写进去了（1.2.28 修的）。
+;; 另注：vla-put-* 成功时返回 nil，所以 VLA 分支只能用「有没有报错」判断。
+(defun tke:putval (e val / d a r)
   (if (= (type e) 'VLA-OBJECT)
-    (vl-catch-all-apply 'vla-put-textstring (list e val))
     (progn
-      (setq d (entget e))
-      (if (null d)
+      (setq r (vl-catch-all-apply 'vla-put-textstring (list e val)))
+      (if (vl-catch-all-error-p r) nil T))
+    (progn
+      (setq d (vl-catch-all-apply 'entget (list e)))
+      (if (or (vl-catch-all-error-p d) (null d))
         nil
         (progn
           (setq a (assoc 1 d))
-          (if a
-            (entmod (subst (cons 1 val) a d))
-            (entmod (append d (list (cons 1 val))))))))))
+          (setq r (if a
+                    (vl-catch-all-apply 'entmod (list (subst (cons 1 val) a d)))
+                    (vl-catch-all-apply 'entmod (list (append d (list (cons 1 val)))))))
+          (if (or (vl-catch-all-error-p r) (null r)) nil T))))))
 
 (defun tke:get1 (L role / r k)
   (setq r (assoc role tke:roles))
@@ -326,8 +335,8 @@
           ;; 只写磁盘，不动内存副本 —— 不能用 setcar，
           ;; ZWCAD 的 LISP 没有这个函数（用户实测 Error: undefined function - SETCAR）。
           ;; 写入流程里没有任何「写后再读」的需求，所以不需要回写内存。
-          (tke:putval (nth 2 e) val)
-          T)
+          ;; 返回 putval 的结果：写失败要能反映到「已写入 N / M」里。
+          (tke:putval (nth 2 e) val))
         nil))
     nil))
 
@@ -418,9 +427,12 @@
                    (if (and old (/= old "")) old "（空）")))))
 
 ;; ---------- 多图框时：共几页 / 第几页 按左右顺序自动编号 ----------
+;; 注意：tke:frames 经 tke:sortx 已经是「从左到右」（X 升序），
+;; 这里**不能**再 reverse —— 反了会让最右边的图框拿到「第 1 页」，
+;; 与「从左到右 = 第 1 页」相反（1.2.28 修的）。
 (defun tke:autopage (/ n i c r)
   (setq n (length tke:frames) i 1 c 0)
-  (foreach f (reverse tke:frames)
+  (foreach f tke:frames
     (setq r (vl-catch-all-apply 'tke:set1 (list (cdr f) "pg1" (itoa n))))
     (if (and (not (vl-catch-all-error-p r)) r) (setq c (1+ c)))
     (setq r (vl-catch-all-apply 'tke:set1 (list (cdr f) "pg2" (itoa i))))
@@ -445,16 +457,22 @@
     ((= n 0)
      (princ "\n      没找到图框，改为点选: ")
      (setq r (tke:pick))
-     (if r (setq hits (list (cons r (tke:attrs r))))))
+     ;; 点中了才用；回车或按 A 都算没选到
+     (if (and r (not (eq r 'cancel)))
+       (setq hits (list (cons r (tke:attrs r))))))
     ((> n 1)
      (princ (strcat "\n      找到 " (itoa n) " 个图框。"))
      (princ "\n      [回车=全部一起改 / 点选=只改点中的那个 / A=取消]: ")
      (setq r (tke:pick))
-     (if r
-       (progn
-         (princ "\n      只改点中的这一个。")
-         (setq hits (list (cons r (tke:attrs r)))))
-       (princ (strcat "\n      全部 " (itoa n) " 个图框一起改。")))))
+     (cond
+       ((eq r 'cancel)
+        (princ "\n      已取消。")
+        (setq hits nil))
+       ((null r)
+        (princ (strcat "\n      全部 " (itoa n) " 个图框一起改。")))
+       (T
+        (princ "\n      只改点中的这一个。")
+        (setq hits (list (cons r (tke:attrs r))))))))
   (if (or (null hits) (= (length hits) 0))
     (princ "\n已取消（没选到图框）。")
     (progn

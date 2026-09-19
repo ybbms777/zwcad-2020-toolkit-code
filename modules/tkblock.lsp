@@ -23,6 +23,9 @@
 (vl-load-com)
 
 ;; ---------- 角色表：(键 显示名 标记 值前缀 同标记里的第几个) ----------
+;; 角色表：(键 显示名 标记 值前缀 同标记里的第几个 单位后缀)
+;; 「图纸日期」已按用户要求移除 —— 本命令不再修改日期。
+;; 第 6 项是单位后缀：样品数量只让用户输数字，写回时自动补上（3 -> 3pcs）。
 (setq tke:roles
   '(("cno"  "客户编号" "编号"    "KY"   2)
     ("pno"  "产品编号" "编号"    "样品" 1)
@@ -30,11 +33,18 @@
     ("dwg"  "图名"     "图名"    nil    1)
     ("mtrl" "材质"     "材质"    nil    1)
     ("own"  "负责人"   "负责人A" nil    1)
-    ("qty"  "样品数量" "数量"    nil    1)
+    ("qty"  "样品数量" "数量"    nil    1 "pcs")
     ("ver"  "版本"     "版本"    nil    1)
-    ("dat"  "图纸日期" "日期"    nil    1)
     ("pg1"  "共几页"   "共几页"  nil    1)
     ("pg2"  "第几页"   "第几页"  nil    1)))
+
+;; 第 3 步要逐个问的字段：(键 提示标签 单位后缀)。料号三处单独处理。
+(setq tke:asks
+  '(("dwg"  "图名（客户料号）"   nil)
+    ("mtrl" "材质"              nil)
+    ("own"  "负责人（首次发行）" nil)
+    ("qty"  "样品数量"          "pcs")
+    ("ver"  "版本"              nil)))
 
 ;; 料号前缀（可改）。产品料号 = 前缀 + 数字，例如 01000 + 851 = 01000851
 (setq tke:matpre "01000")
@@ -346,6 +356,31 @@
                              (if (and old (/= old "")) old "空") ">: ")))
   (if (or (null v) (= v "")) old v))
 
+;; ---------- 去掉末尾的单位后缀（3pcs -> 3）----------
+(defun tke:strip-suf (s suf / n k)
+  (if (or (null s) (= s ""))
+    ""
+    (progn
+      (setq n (strlen s) k (strlen suf))
+      (if (and (> n k) (= (strcase (substr s (1+ (- n k)))) (strcase suf)))
+        (substr s 1 (- n k))
+        s))))
+
+;; ---------- 问一个带单位的字段：只收数字，写回时补后缀 ----------
+(defun tke:ask-suf (role label suf / old v base)
+  (setq old (tke:get role))
+  (setq base (tke:strip-suf old suf))
+  (setq v (getstring (strcat "\n      " label "（只输数字，单位 " suf "）<"
+                             (if (= base "") "空" base) ">: ")))
+  (if (or (null v) (= v ""))
+    old
+    (progn
+      (while (and v (/= v "") (not (tke:digits v)))
+        (princ (strcat "\n      只能输纯数字，例如 3（会自动加 " suf "）。"))
+        (setq v (getstring "\n      重新输入: "))
+        (if (or (null v) (= v "")) (setq v "")))
+      (if (= v "") old (strcat v suf)))))
+
 ;; ---------- 是不是纯数字 ----------
 (defun tke:digits (s / i ok)
   (setq ok (and s (/= s "")) i 1)
@@ -401,6 +436,7 @@
   (princ "\n  料号只输一次数字，自动填三处：")
   (princ "\n     客户编号 KY-xxx   产品编号 样品-xxx   产品料号 01000xxx")
   (princ "\n  每一项直接回车 = 保持原值不变；Esc 随时取消。")
+  (princ "\n  样品数量只输数字（自动补 pcs）；图纸日期不在本命令修改。")
   (princ "\n  =====================================================")
   (setq hits (tke:scan))
   (setq tke:frames hits)
@@ -452,12 +488,10 @@
       (setq ans (getkword "\n[2/2] 还要改其它字段吗？[回车=不改（只更新料号）/ Y=逐个改]: "))
       (if (and ans (= ans "Y"))
         (progn
-          (tke:push "dwg" "图名" (tke:ask "dwg" "图名（客户料号）"))
-          (tke:push "mtrl" "材质" (tke:ask "mtrl" "材质"))
-          (tke:push "own" "负责人" (tke:ask "own" "负责人（首次发行）"))
-          (tke:push "qty" "样品数量" (tke:ask "qty" "样品数量"))
-          (tke:push "ver" "版本" (tke:ask "ver" "版本"))
-          (tke:push "dat" "图纸日期" (tke:ask "dat" "图纸日期"))
+          (foreach a tke:asks
+            (if (nth 2 a)
+              (tke:push (car a) (cadr a) (tke:ask-suf (car a) (cadr a) (nth 2 a)))
+              (tke:push (car a) (cadr a) (tke:ask (car a) (cadr a)))))
           (if tke:multi
             (princ "\n      多个图框：共几页 / 第几页 将按左右顺序自动编号，不再单独问。")
             (progn

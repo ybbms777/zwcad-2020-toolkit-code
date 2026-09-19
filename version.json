@@ -1,17 +1,21 @@
 {
-  "version": "1.2.26",
-  "date": "2026-09-19 08:37",
+  "version": "1.2.27",
+  "date": "2026-09-19 09:27",
   "fontVersion": "2026.09.18",
   "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "同步 使用说明.md：样品数量的提示改为「只输数字，单位 pcs」（输入 5 写回 5pcs），并移除已去掉的图纸日期那一行（1.2.25 改了代码但漏改文档）"
+    "更新器（更新.cmd）改为「校验通过才算下载成功」：每个更新源各试一次，哈希不符就换下一个源；两个源都不符就等一会儿整轮重试（最多 3 轮，分别等 15/30 秒）。解决 GitHub 的 raw CDN「按文件缓存」导致的假失败",
+    "更新器拉清单时两个源各拉一次，取 date 更新的那一份 —— 清单本身也会被 CDN 缓存，只从一个源拉会误报「已是最新」",
+    "把误导性的「校验不通过（文件可能不完整）」改成「更新源还在发旧文件（GitHub 的 CDN 缓存），过几分钟再跑一次本更新即可」",
+    "「已是最新」时补一句提示：如果刚发布完却显示已是最新，可能是更新源缓存没刷新，过几分钟再跑一次",
+    "本地 version.json 直接写已取到的那份清单，不再多发一次请求"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "824e4189a3cef5b36cfdc03d31b78d3714fcb1d55666feac9d4d736f272a9071",
+    "CHANGELOG.md": "4cd880e55e2b5e82ba6235f92308c7fa0c6cc16bc9ee8bf43f4fe2f2c3968cd6",
     "README.md": "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "069f64794cbba21c528bddff85fe8fd0d26cd2266569e65df252956f2d4cc2c5",
@@ -32,7 +36,7 @@
     "src/Bridge.cs": "559a3816a40df82a771b321c3b1d3a96a328eccc41c449a590751eb70712e998",
     "src/Mouse.cs": "ea06aed49b6b1e746d8eb5ed4474c0c19c60213d58a8db06d32af2b4c7a85b34",
     "src/build.ps1": "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
-    "update.ps1": "957adee06b439d1064470f0694e464402419d57c16353586842bc2d7064b0fb3",
+    "update.ps1": "2e61026b1826e970610d5102711c3ad14d2ecfa01e4457e7218c013be55ae4b6",
     "一键安装.cmd": "7779c1f386380627d542a076b81371c2c2d2ad7fe1fa7b41e33eef91bf30d917",
     "使用说明.md": "c5115e87435f6adf3cd3826f22e9e896ab36275e7ea2d59b1bc784dc38229af6",
     "取消自动加载.cmd": "3a638a469aa3b91d6f4280f7a7df784d96468a8a43be04936a10b0ee0892adef",

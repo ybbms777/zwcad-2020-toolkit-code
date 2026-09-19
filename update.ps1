@@ -35,6 +35,48 @@ function Get-Remote([string]$rel, [string]$outFile) {
     return $false
 }
 
+# 下载并「校验通过才算成功」。
+# 为什么要这样：raw.githubusercontent.com 走一层 CDN，刚发布完它可能还在发旧文件，
+# 而且缓存是「按文件」的（会出现清单是新的、某个文件还是旧的）。缓存刷新时间不固定
+# （实测 15 秒 ~ 4 分钟），加 ?t=时间戳也绕不过。
+# 所以：每个源各试一次，哈希不符就换下一个源；都不符就等一会儿再整轮重试。
+function Get-RemoteVerified([string]$rel, [string]$want, [string]$outFile, [int]$rounds = 3) {
+    for ($r = 1; $r -le $rounds; $r++) {
+        foreach ($s in $sources) {
+            try {
+                $wc = New-Object Net.WebClient
+                $wc.Headers.Add('User-Agent', 'ZWKit-Updater')
+                $wc.Headers.Add('Cache-Control', 'no-cache')
+                $wc.DownloadFile($s + $rel, $outFile)
+            } catch { continue }
+            if ((Sha $outFile) -eq $want) { return $true }
+            Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+        }
+        if ($r -lt $rounds) {
+            Say ('          （更新源还没刷新，' + (15 * $r) + ' 秒后重试...）') 'DarkGray'
+            Start-Sleep -Seconds (15 * $r)
+        }
+    }
+    return $false
+}
+
+# 取云端清单。清单本身也可能被 CDN 缓存住 —— 两个源各拉一次，取 date 更新的那个。
+# 日期格式是 yyyy-MM-dd HH:mm，字符串比较即可。
+function Get-ManifestText() {
+    $best = $null; $bestDate = ''
+    foreach ($s in $sources) {
+        try {
+            $wc = New-Object Net.WebClient
+            $wc.Headers.Add('User-Agent', 'ZWKit-Updater')
+            $wc.Headers.Add('Cache-Control', 'no-cache')
+            $txt = $wc.DownloadString($s + 'version.json')
+            $d = ($txt | ConvertFrom-Json).date
+            if ($d -and $d -gt $bestDate) { $best = $txt; $bestDate = $d }
+        } catch { }
+    }
+    return $best
+}
+
 Write-Host ''
 Write-Host '  ZWCAD 工具包 - 云更新' -ForegroundColor Cyan
 Write-Host '  ------------------------------------------------' -ForegroundColor DarkCyan
@@ -49,12 +91,11 @@ if (Test-Path -LiteralPath $localPath) {
 
 # ---------- 2. 拉云端清单 ----------
 Say '  [1/4] 连接更新源...' 'Cyan'
+$manifestText = Get-ManifestText
 $manifest = $null
-$tmpJson = Join-Path $env:TEMP ('zwkit-ver-' + [Guid]::NewGuid().ToString('N') + '.json')
-if (Get-Remote 'version.json' $tmpJson) {
-    try { $manifest = Get-Content -LiteralPath $tmpJson -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
+if ($manifestText) {
+    try { $manifest = $manifestText | ConvertFrom-Json } catch {}
 }
-if (Test-Path -LiteralPath $tmpJson) { Remove-Item -LiteralPath $tmpJson -Force -ErrorAction SilentlyContinue }
 
 if (-not $manifest) {
     Say '        无法连接更新源，请检查网络后重试。' 'Red'
@@ -84,6 +125,7 @@ foreach ($rel in ($want.Keys | Sort-Object)) {
 
 if (-not $changed.Count) {
     Say '        已是最新版本，无需更新。' 'Green'
+    Say '        （如果刚发布完却显示已是最新，可能是更新源的缓存还没刷新，过几分钟再跑一次）' 'DarkGray'
     Say ''
     exit 0
 }
@@ -112,13 +154,9 @@ foreach ($rel in $changed) {
 
     $tmp = $full + '.new'
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
-    if (-not (Get-Remote $rel $tmp)) {
-        Say ('        x 下载失败  ' + $rel) 'Red'
-        $failed += $rel
-        continue
-    }
-    if ((Sha $tmp) -ne $want[$rel]) {
-        Say ('        x 校验不通过（文件可能不完整）  ' + $rel) 'Red'
+    if (-not (Get-RemoteVerified $rel $want[$rel] $tmp)) {
+        Say ('        x 拿不到正确版本  ' + $rel) 'Red'
+        Say '          更新源还在发旧文件（GitHub 的 CDN 缓存），过几分钟再跑一次本更新即可。' 'DarkGray'
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         $failed += $rel
         continue
@@ -148,7 +186,7 @@ Say ''
 Say '  [4/4] 写入版本信息...' 'Cyan'
 if (-not $failed.Count) {
     try {
-        [IO.File]::WriteAllText($localPath, (Get-Remote 'version.json' $null), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($localPath, $manifestText, [Text.UTF8Encoding]::new($false))
         Say ('        本地版本已更新为 ' + $manifest.version) 'Gray'
     } catch {
         Say '        版本文件写入失败，下次运行会重新比对（不影响功能）。' 'DarkGray'

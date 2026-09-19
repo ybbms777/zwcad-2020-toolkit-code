@@ -1,20 +1,19 @@
 {
-  "version": "1.2.24",
-  "date": "2026-09-18 18:31",
+  "version": "1.2.25",
+  "date": "2026-09-19 08:28",
   "fontVersion": "2026.09.18",
   "fontsHash": "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
   "notes": [
-    "★ 修复 TKE 写入报「undefined function - SETCAR」：ZWCAD 的 LISP 没有 setcar 这个函数，导致整批写入在第一个属性后就中断（只写进去一个值，且 UNDO _End 没执行到）",
-    "TKE 去掉 setcar：写入流程没有「写后再读」的需求，不需要回写内存副本",
-    "TKE 每个属性单独包 catch-all：某个属性写失败不再中断整批，也不会让 UNDO _End 执行不到（避免用户的选择集被留在未结束的 UNDO 组里）",
-    "TKE 写入后显示「已写入 N / M 个属性值」，有失败会明确警告，不再只报「已写入 N 项」"
+    "TKE 样品数量改为只输数字：输入 3 自动写回 3pcs。默认值显示时会剥掉 pcs 后缀，非纯数字会提示重输",
+    "TKE 移除「图纸日期」：本命令不再修改日期（角色表和提问流程都已去掉）",
+    "TKE 字段提问改为走一张表（tke:asks），以后增删字段只改这一处"
   ],
   "source": "ybbms777/zwcad-2020-toolkit-code",
   "branch": "main",
   "files": {
     ".gitattributes": "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
     ".gitignore": "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-    "CHANGELOG.md": "a384056f71e52ed2ea166eab3926b1e85afc1dcc2361b3155ce85c06b7c486b1",
+    "CHANGELOG.md": "f1f5a326111b95d9028aca6f3e7c5757b022b5dd62a52f04a05c60e5de617f9c",
     "README.md": "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
     "bin/ZWKit.Core.102.dll": "3e8795a278733251f2dc5a9c5d55c20f3cc8ce272f5bcdca3a3a27149812ee62",
     "boot.lsp": "069f64794cbba21c528bddff85fe8fd0d26cd2266569e65df252956f2d4cc2c5",
@@ -29,7 +28,7 @@
     "modules/font.lsp": "c1f0ad769ffb048502c67dabd6eeb74e55f8f193e8f3ecc7387a8fd2bce40f6d",
     "modules/frame.lsp": "b60d1cbdb9c56dae8edd3cccd20e7842e8b4e15db4de819b7776cefd41849cd7",
     "modules/symbols.lsp": "c57b9bcab8f3121bfa14879a32d417466d7903685ed3f8776851dba8f561dc0c",
-    "modules/tkblock.lsp": "f547dc9f6560a435f2b2a3af93be4fe1a57a4aa35815e774303365207369d157",
+    "modules/tkblock.lsp": "791e29b59ee6b7a64106a31520e3de41eaf9927d1ff3dce78ff5faa655ddf70c",
     "modules/tolerance.lsp": "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
     "modules/trim.lsp": "8fbfb20c587da172766bce4c74507ec0819a49972166822ee1c2b2c1118b7320",
     "src/Bridge.cs": "559a3816a40df82a771b321c3b1d3a96a328eccc41c449a590751eb70712e998",

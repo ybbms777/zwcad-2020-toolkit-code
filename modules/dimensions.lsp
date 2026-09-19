@@ -1,0 +1,121 @@
+;;; SmartDim2020 - conservative AutoLISP helper for ZWCAD 2020.
+;;; 中文提示版：使用 GBK / CP936 编码保存。
+;;; ZD / ZD2: point dimensions, Enter for object dimensions.
+;;; ZDO: repeat object dimensions. ZDB: nearest-point edge dimensions.
+;;; Uses current dimension style/layer; does not redefine DIM.
+
+(defun zd20:finish ()
+  (while (> (getvar "CMDACTIVE") 0) (command pause))
+)
+
+(defun c:ZDO (/ *error* oldecho sel ent data kind p1 p2)
+  (setq oldecho (getvar "CMDECHO"))
+  (defun *error* (msg)
+    (setvar "CMDECHO" oldecho)
+    (if (and msg (not (wcmatch (strcase msg) "*CANCEL*,*QUIT*,*BREAK*,*取消*,*退出*")))
+      (princ (strcat "\n标注工具提示：" msg)))
+    (princ)
+  )
+  (setvar "CMDECHO" 0)
+  (princ "\n请选择对象：直线标长度，圆标直径，圆弧标半径。回车结束，Esc 取消。")
+  (while (setq sel (entsel "\n请选择直线、圆或圆弧（点圆周，不要点圆心）<回车结束>："))
+    (setq ent (car sel) data (entget ent) kind (cdr (assoc 0 data)))
+    (cond
+      ((= kind "LINE")
+        (setq p1 (trans (cdr (assoc 10 data)) 0 1)
+              p2 (trans (cdr (assoc 11 data)) 0 1))
+        (if (not (equal (caddr p1) (caddr p2) 1e-8))
+          (princ "\n这条直线不平行于当前绘图平面，请先将用户坐标系调整到图形所在平面。")
+          (progn
+            (if (or (equal (car p1) (car p2) 1e-8)
+                    (equal (cadr p1) (cadr p2) 1e-8))
+              (command "_.DIMLINEAR" "" sel)
+              (command "_.DIMALIGNED" "" sel))
+            (zd20:finish))))
+      ((= kind "CIRCLE")
+        (command "_.DIMDIAMETER" sel)
+        (zd20:finish))
+      ((= kind "ARC")
+        (command "_.DIMRADIUS" sel)
+        (zd20:finish))
+      (T (princ "\n暂不支持此类对象自动标注。可退出后输入 ZD，选两个点标宽高；请勿为此炸开原图。"))
+    )
+  )
+  (setvar "CMDECHO" oldecho)
+  (princ)
+)
+
+(defun zd20:unified (/ *error* first second)
+  (defun *error* (msg)
+    (if (and msg (not (wcmatch (strcase msg) "*CANCEL*,*QUIT*,*BREAK*,*取消*,*退出*")))
+      (princ (strcat "\n标注工具提示：" msg)))
+    (princ))
+  (princ "\n标距离：直接选两点；标圆或圆弧：先回车选对象；标角度：输入 J 选两线，或 T 选三点。")
+  (initget "O R D A J T")
+  (setq first (getpoint "\n指定第一个标注点，或 [选对象(O)/半径(R)/直径(D)/对齐(A)/角度(J)/三点角度(T)] <回车选对象>："))
+  (cond
+    ((or (null first) (equal first "O")) (c:ZDO))
+    ((equal first "R") (command "_.DIMRADIUS") (zd20:finish))
+    ((equal first "D") (command "_.DIMDIAMETER") (zd20:finish))
+    ((equal first "J") (c:ZDJ))
+    ((equal first "T") (c:ZDJ3))
+    ((equal first "A") (command "_.DIMALIGNED") (zd20:finish))
+    ((listp first)
+      (if (setq second (getpoint first "\n指定第二个标注点 <回车结束>："))
+        (progn
+          (command "_.DIMLINEAR" "_non" first "_non" second)
+          (zd20:finish)))))
+  (princ)
+)
+
+(defun zd20:angle (three / *error*)
+  (defun *error* (msg)
+    (if (and msg (not (wcmatch (strcase msg) "*CANCEL*,*QUIT*,*BREAK*,*取消*,*退出*,*取消*,*退出*")))
+      (princ (strcat "\n角度标注提示：" msg)))
+    (princ))
+  (if three
+    (progn
+      (princ "\n三点角度：依次捕捉角的顶点、第一条边上的点、第二条边上的点，再放置角度尺寸。")
+      (command "_.DIMANGULAR" ""))
+    (progn
+      (princ "\n角度标注：依次选择构成夹角的两条直线，再将尺寸放在需要标注的角内。")
+      (princ "\n若无法选择多段线中的边，请按 Esc，改用 ZDJ3 捕捉三个点。")
+      (command "_.DIMANGULAR")))
+  (zd20:finish)
+  (princ))
+
+(defun c:ZDJ () (zd20:angle nil))
+(defun c:ZDJ3 () (zd20:angle T))
+(defun c:ZD () (zd20:unified))
+(defun c:ZD2 () (zd20:unified))
+
+(defun zd20:edgepoint (msg / pick hit)
+  (while (and (not hit) (setq pick (getpoint msg)))
+    (setq hit (osnap pick "_nea"))
+    (if (not hit) (princ "\n未捕捉到边，请靠近目标直边重新点击。")))
+  hit
+)
+
+(defun c:ZDB (/ *error* oldsnap p1 p2)
+  (setq oldsnap (getvar "OSMODE"))
+  (defun *error* (msg)
+    (setvar "OSMODE" oldsnap)
+    (if (and msg (not (wcmatch (strcase msg) "*CANCEL*,*QUIT*,*BREAK*,*取消*,*退出*")))
+      (princ (strcat "\n两边标注提示：" msg)))
+    (princ))
+  (setvar "OSMODE" 0)
+  (princ "\n标宽度请点左右竖边；标高度请点上下横边。")
+  (princ "\n请点直边部分，不要点圆角。回车结束，Esc 取消。")
+  (if (and
+        (setq p1 (zd20:edgepoint "\n请选择第一条直边附近的点 <回车结束>："))
+        (setq p2 (zd20:edgepoint "\n请选择另一侧直边附近的点 <回车结束>：")))
+    (progn
+      (setvar "OSMODE" oldsnap)
+      (command "_.DIMLINEAR" "_non" p1 "_non" p2)
+      (zd20:finish)))
+  (setvar "OSMODE" oldsnap)
+  (princ)
+)
+
+(princ "\n简化智能标注加载成功！输入 ZD 或 ZD2：选两点标距离，先回车再选对象标直径/半径。角度：输入 ZDJ 选两条线，或 ZDJ3 选三个点。")
+(princ)

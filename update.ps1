@@ -11,10 +11,13 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $root = $PSScriptRoot
 $repo = 'ybbms777/zwcad-2020-toolkit-code'
-$sources = @(
-    'https://raw.githubusercontent.com/' + $repo + '/main/',
-    'https://cdn.jsdelivr.net/gh/' + $repo + '@main/'
-)
+# ⚠️ 千万别写成 @('a' + $x, 'b' + $y) —— PowerShell 里**逗号的优先级高于加号**，
+# 那样只会得到 1 个元素「a b」（两个地址被空格拼成一个字符串），
+# 请求就变成 404，表现就是「无法连接更新源」（1.2.29 修的）。
+# 稳妥写法：先把每项算成变量，再组数组。
+$srcRaw = 'https://raw.githubusercontent.com/' + $repo + '/main/'
+$srcCdn = 'https://cdn.jsdelivr.net/gh/' + $repo + '@main/'
+$sources = @($srcRaw, $srcCdn)
 
 # 这些永远不覆盖（本机状态 / 用户选择 / 大文件 / 备份）
 $never = @('fonts/', 'selection.lsp', 'install-state.json', 'install.log', 'version.json', '_backup/')
@@ -28,6 +31,8 @@ function Get-Remote([string]$rel, [string]$outFile) {
             $wc = New-Object Net.WebClient
             $wc.Headers.Add('User-Agent', 'ZWKit-Updater')
             $wc.Headers.Add('Cache-Control', 'no-cache')
+            # 同 Get-ManifestText：DownloadString 默认按 ANSI 解码，文本文件必须显式 UTF-8
+            $wc.Encoding = [Text.Encoding]::UTF8
             if ($outFile) { $wc.DownloadFile($s + $rel, $outFile) } else { return $wc.DownloadString($s + $rel) }
             return $true
         } catch { }
@@ -64,15 +69,28 @@ function Get-RemoteVerified([string]$rel, [string]$want, [string]$outFile, [int]
 # 日期格式是 yyyy-MM-dd HH:mm，字符串比较即可。
 function Get-ManifestText() {
     $best = $null; $bestDate = ''
+    $script:srcErr = @()
     foreach ($s in $sources) {
         try {
             $wc = New-Object Net.WebClient
             $wc.Headers.Add('User-Agent', 'ZWKit-Updater')
             $wc.Headers.Add('Cache-Control', 'no-cache')
+            # ★ 必须显式指定 UTF-8 ★
+            # WebClient.DownloadString 默认按系统 ANSI 解码（中文机上是 gb2312），
+            # 而 version.json 是 UTF-8 —— 里面的中文文件名（一键安装.cmd / 使用说明.md …）
+            # 会变成乱码，ConvertFrom-Json 直接解析失败，$manifest 为 null，
+            # 表现就是「无法连接更新源」（1.2.29 修的）。
+            # 注意：服务器虽然返回 Content-Type: text/plain; charset=utf-8，
+            # 但 DownloadString 不看响应头，只用 $wc.Encoding，所以必须手动设。
+            $wc.Encoding = [Text.Encoding]::UTF8
             $txt = $wc.DownloadString($s + 'version.json')
             $d = ($txt | ConvertFrom-Json).date
             if ($d -and $d -gt $bestDate) { $best = $txt; $bestDate = $d }
-        } catch { }
+        } catch {
+            # 不要静默吞掉：不然失败时用户只看到「无法连接更新源」，
+            # 分不清是网络、404 还是 JSON 解析问题（1.2.29 加的诊断）。
+            $script:srcErr += ('          ' + $s + '  ->  ' + $_.Exception.Message)
+        }
     }
     return $best
 }
@@ -99,7 +117,12 @@ if ($manifestText) {
 
 if (-not $manifest) {
     Say '        无法连接更新源，请检查网络后重试。' 'Red'
-    Say ('        更新源: ' + $sources[0]) 'DarkGray'
+    Say ('        共 ' + $sources.Count + ' 个更新源：') 'DarkGray'
+    foreach ($s in $sources) { Say ('          ' + $s) 'DarkGray' }
+    if ($script:srcErr) {
+        Say '        每个源的具体结果：' 'DarkGray'
+        foreach ($e in $script:srcErr) { Say $e 'DarkGray' }
+    }
     exit 1
 }
 Say ('        本地版本 : ' + $localVer) 'Gray'

@@ -1,14 +1,11 @@
 {
-    "version":  "1.2.37",
-    "date":  "2026-09-21 16:22",
+    "version":  "1.2.38",
+    "date":  "2026-09-21 16:27",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "TR / EX：悬停高亮只亮「点下去会被剪掉的那一段」（到左右最近两个交点的区间），不再是整条线",
-                  "TR / EX：按住 Shift（延伸）时不预览那一段，整条亮（延伸的那一段要按边界算，暂未做）",
-                  "DLL：新增 ZWK_BOUND_101（边界集合句柄表），快速模式传空串 = 全部对象都算边界",
-                  "DLL：ZWK_HOVER_101 多一个 shift 参数；带 ZWK_HOVERCHECK_101 的自检也走同一套逻辑",
-                  "速度：悬停只在压到的对象附近开小窗找交点（不整图扫描），并按「对象 + 区间」签名决定要不要重画"
+                  "使用说明：TR / EX 一段改成实际行为 —— 原生准星、只亮会被剪掉的那一段、Shift 是延伸（整条亮）",
+                  "使用说明：明确写清 TR / EX 期间不支持滚轮缩放与中键平移（用的是 CAD 自己的输入循环，收不到滚轮），要调视图先 Esc 退出、调好再执行"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
@@ -17,7 +14,7 @@
                   ".gitignore":  "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
                   "bin/ZWKit.Core.102.dll":  "0c7f9b5a486ad794ff3d0b5df9c2703b20916d604a491ab7b9d4a11b74e75f62",
                   "boot.lsp":  "f975b2a66937732524e05b8476dc31f40ee7ebd988d6cbbe598845ee63a25a1d",
-                  "CHANGELOG.md":  "0274bf42dcf2f98485cc5ff13c13fce27beaa57dedb0722826321a1b3832e389",
+                  "CHANGELOG.md":  "7e5d50ca86c6f11044a05b024892e12aa86a1224e253c537f26e19fa7b39182b",
                   "cli.ps1":  "fedf20a7be8a7c4a208fa4051ce2cbf9c1e4d050abc7d44fb9acfa92f0264374",
                   "install.ps1":  "98f45b014d64d28bb6b90e57bf168e98db2fe6f4407f9a51cc4bad4cf55abdb1",
                   "modules.lsp":  "b3afe3b60d90204db5f457b084e9ad4e01cba750d0cc513844db6d1d7bde5894",
@@ -40,7 +37,7 @@
                   "update.ps1":  "57333b0c625ab93cce29d11a7d4759672ce59d8de9cc2887c7306b82b1f569ed",
                   "更新.cmd":  "23afc10a38b73c7326b5d4bcd8c2bdb4b2feac25a287981947cdaa12de00d75a",
                   "取消自动加载.cmd":  "eea93443e0de7a8da02e859cc2759c68452881689363ae1a77844fd9d5403634",
-                  "使用说明.md":  "884142464fe783366b66e54cc26b0170b3116124823f1211f70e731e95c1d5ad",
+                  "使用说明.md":  "281e8066e77638a7ee98ff3eb6f41e46abec8a50de69d5e12641ae96807861c5",
                   "一键安装.cmd":  "8eea6e887e556507cf0c4538cccb2d27c86aa68a92cb3eadf8453847fe9905b8"
               }
 }

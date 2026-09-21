@@ -220,7 +220,11 @@ public class ZWKitMouse
             {
                 try
                 {
-                    if ((GetAsyncKeyState(4) & 0x8000) != 0)   // VK_MBUTTON
+                    bool hide = (GetAsyncKeyState(4) & 0x8000) != 0;      // 中键按住：CAD 自己在平移
+                    // CAD 不在前台（Alt+Tab 切走了）也要收：贴纸是独立的置顶窗口，
+                    // 不收就会浮在别的软件上面（2026-09-21 用户反馈「居然跨软件显示了」）。
+                    if (!hide && !OurWindow(GetForegroundWindow())) hide = true;
+                    if (hide)
                     {
                         if (sticker != null) sticker.Show(false);
                         if (pick != null) pick.Show(false);

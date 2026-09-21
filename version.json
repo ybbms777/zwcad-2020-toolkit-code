@@ -1,19 +1,19 @@
 {
-    "version":  "1.2.42",
-    "date":  "2026-09-21 18:35",
+    "version":  "1.2.43",
+    "date":  "2026-09-21 18:42",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "修复：滚轮缩放、松开中键之后，拾取框方块和青色高亮不再停在旧位置（改用真实硬件光标位置计算；滚轮/中键一动先收起贴纸；视图一变强制重算）"
+                  "修复：TR / EX 开着的时候切到别的软件，拾取框方块/高亮不再浮在别的窗口上面（CAD 不在前台时自动收起，切回来立即恢复）"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
     "files":  {
                   ".gitattributes":  "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
                   ".gitignore":  "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-                  "bin/ZWKit.Core.102.dll":  "a2e5bc7879daa163ea64ee9376bf562322f250757f901600220b34ed829a542c",
+                  "bin/ZWKit.Core.102.dll":  "525f67a813ed4a1edc8f905b895d8f851d1933e8f9e2ad5c56c1339e2986aead",
                   "boot.lsp":  "f975b2a66937732524e05b8476dc31f40ee7ebd988d6cbbe598845ee63a25a1d",
-                  "CHANGELOG.md":  "78620684bf992f4ca62b11a7bb5d16dfbc5e18673a86fdb32b5073b45c3554ce",
+                  "CHANGELOG.md":  "8954e2dfbc0919fb4e2ea94d8af7a9130caa09258500024804a5fb0e50bb4289",
                   "cli.ps1":  "fedf20a7be8a7c4a208fa4051ce2cbf9c1e4d050abc7d44fb9acfa92f0264374",
                   "install.ps1":  "98f45b014d64d28bb6b90e57bf168e98db2fe6f4407f9a51cc4bad4cf55abdb1",
                   "modules.lsp":  "b3afe3b60d90204db5f457b084e9ad4e01cba750d0cc513844db6d1d7bde5894",
@@ -32,7 +32,7 @@
                   "README.md":  "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
                   "src/Bridge.cs":  "2f34431a432026dee8b0c0bd1b4db4e9e81b707b819595949e39c8ecb6cf6375",
                   "src/build.ps1":  "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
-                  "src/Mouse.cs":  "baca0f6c9aa767dd4dffca169811347d367ee6bb492ca65b2d09fe63cc5ac71a",
+                  "src/Mouse.cs":  "f2b0907d47de86149adea197a891b0b62781e7990023aa944aa3717f7e238b2c",
                   "update.ps1":  "57333b0c625ab93cce29d11a7d4759672ce59d8de9cc2887c7306b82b1f569ed",
                   "更新.cmd":  "23afc10a38b73c7326b5d4bcd8c2bdb4b2feac25a287981947cdaa12de00d75a",
                   "取消自动加载.cmd":  "eea93443e0de7a8da02e859cc2759c68452881689363ae1a77844fd9d5403634",

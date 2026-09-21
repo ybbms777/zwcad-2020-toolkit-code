@@ -102,6 +102,26 @@ public class ZWKitMouse
     // 前后一个像素都不变；往绘图区窗口 DC 上画（连拖动笔画的那些线也一样）进程内
     // 抓得到、屏幕上根本看不见。所以这里自己算实体的屏幕折线，画在一个自己创建的
     // 置顶透明「贴纸」窗口上：CAD 的画布是 GPU 合成的，只有独立窗口才盖得住。
+    // 观察型消息过滤器：只看不吞（永远返回 false）。grread 期间 CAD 不把鼠标消息交给 LISP，
+    // 但滚轮/中键这类「视图动作」还是走 CAD 自己的消息泵 —— 借这儿把贴纸先收起来，
+    // 免得它们停在旧位置（滚轮缩放、中键平移都会让贴纸过期）。
+    // 2026-09-21 用户反馈：滚轮缩放后高亮留在原地、松开中键后方块在旧位置闪一下。
+    sealed class ViewFilter : IMessageFilter
+    {
+        internal HoverPreview owner;
+        internal static int Hits;        // 自检用：收到几次滚轮/中键（ZWK_VIEW_101 会报出来）
+        internal static int Last;
+        public bool PreFilterMessage(ref Message m)
+        {
+            if (m.Msg == 0x20A || m.Msg == 0x207 || m.Msg == 0x208)   // WHEEL / MBUTTONDOWN / MBUTTONUP
+            {
+                Hits++; Last = m.Msg;
+                try { if (owner != null) owner.Clear(); } catch { }
+            }
+            return false;
+        }
+    }
+
     sealed class HoverPreview : IDisposable
     {
         const int PenWidth = 3;
@@ -140,6 +160,7 @@ public class ZWKitMouse
         // 不调用任何 CAD API，所以线程安全）。松开后主线程在下一个鼠标事件里照常重画。
         Thread watch;
         volatile bool watchStop;
+        ViewFilter vfilter;
         internal int Hits { get { return lit.Count; } }
         internal string Paper { get { return paper; } }
         internal string Bounds { get { return dirty.Width > 0 ? dirty.Left+","+dirty.Top+","+dirty.Right+","+dirty.Bottom : "-"; } }
@@ -212,11 +233,19 @@ public class ZWKitMouse
 
         void WatchOn()
         {
-            if (watch != null) return;
-            watchStop = false;
-            watch = new Thread(Watch);
-            watch.IsBackground = true;
-            watch.Start();
+            if (watch == null)
+            {
+                watchStop = false;
+                watch = new Thread(Watch);
+                watch.IsBackground = true;
+                watch.Start();
+            }
+            if (vfilter == null)
+            {
+                vfilter = new ViewFilter();
+                vfilter.owner = this;
+                try { Application.AddMessageFilter(vfilter); } catch { }
+            }
         }
 
         internal void WatchOff()
@@ -225,6 +254,9 @@ public class ZWKitMouse
             Thread t = watch;
             watch = null;
             if (t != null) { try { t.Join(200); } catch { } }
+            ViewFilter f = vfilter;
+            vfilter = null;
+            if (f != null) { try { f.owner = null; Application.RemoveMessageFilter(f); } catch { } }
         }
 
         // 每帧调用；内部节流（移动 >= 2 像素、距上次 >= 45 毫秒才真的去查），
@@ -946,6 +978,11 @@ public class ZWKitMouse
             if (!ScreenSize(out w, out h)) return Status("NOSCREEN");
             IntPtr canvas = FindCanvas(w, h);
             if (canvas == IntPtr.Zero) return Status("NOCANVAS");
+            // 一律用真实硬件光标位置，不用 grread 送来的点：平移/缩放之后 grread 可能把
+            // 平移前的旧点再送一次，拿它画方块就会在错位处闪一下（2026-09-21 用户反馈）。
+            double ux, uy;
+            if (CursorFrac(canvas, w, h, out ux, out uy)) { fx = ux; fy = uy; }
+            else { if (hover != null) hover.Clear(); return Status("OFF"); }   // 光标不在绘图区
             bool inside = fx >= 0.0 && fx <= 1.0 && fy >= 0.0 && fy <= 1.0;
             if (hover == null) hover = new HoverPreview();
             hover.Attach(canvas);
@@ -1160,6 +1197,7 @@ public class ZWKitMouse
             ZwSoft.ZwCAD.Geometry.Matrix3d w2u;
             sb.Append(";WcsToUcs=" + TryWcsToUcs(out w2u));
             sb.Append(";PICKBOX=" + PickPixels());
+            sb.Append(";FilterHits=" + ViewFilter.Hits + "/" + ViewFilter.Last);
             using (var view = ed.GetCurrentView())
             {
                 sb.Append(";CenterPoint=" + N(view.CenterPoint.X) + "," + N(view.CenterPoint.Y));

@@ -121,9 +121,15 @@
   (ssget m p1 p2))
 
 ;; ============================================================ 几何层：委托原生
-;; bnd 为 nil 表示「全部选择」（给原生命令一个回车）。
-(defun ze:cmd (isExt bnd mode plist tail / lst p)
-  (setq lst (list (if isExt "_.EXTEND" "_.TRIM") (if bnd bnd "") "" mode))
+;; bnd 为 nil 表示「全部对象作边界」。
+;; 注意：这里必须给原生命令一个「真实的选择集」，不能给 ""（回车=全选）——
+;; 2026-09-21 在 ZWCAD 2020 上实测：传 "" 时 TRIM / EXTEND 会从头到尾走完、
+;; 不报任何错、也不改图形（V1/V2/V3/V5 均无变化）；改成 (ssget "_X") 后
+;; 栏选 / 窗交 / 修剪 / 延伸 四种组合全部生效（A1~A4）。
+(defun ze:cmd (isExt bnd mode plist tail / lst p s)
+  (setq s (if bnd bnd (ssget "_X")))
+  (if (null s) (setq s ""))
+  (setq lst (list (if isExt "_.EXTEND" "_.TRIM") s "" mode))
   (foreach p plist (setq lst (append lst (list "_non" p))))
   (foreach p tail (setq lst (append lst (list p))))
   (apply 'command lst))

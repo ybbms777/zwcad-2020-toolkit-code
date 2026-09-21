@@ -96,8 +96,10 @@
   (setq sz (getvar "SCREENSIZE"))
   (if (and sz (> (cadr sz) 0)) (/ (getvar "VIEWSIZE") (cadr sz)) 0.0))
 
-;; 拾取点周围 2 像素的小交叉框。刻意不用「裸点」喂原生命令：
-;; 交接文档 5.2 记录过 ZWCAD 可能把给点解释成矩形框选（提示「指定对角点:」）。
+;; 拾取点周围 2 像素的小交叉框，只用来「判断这个点上有没有对象」。
+;; 单个选择本身已经改用裸点喂原生命令 —— 真机实测（T3）ZWCAD 并没有把裸点
+;; 当成矩形框选（CMDACTIVE=0，剪掉的那一段也对），比小窗交更贴近 AutoCAD 的
+;; 「拾取点决定剪哪一端」。
 (defun ze:box (p / d)
   (setq d (* 2.0 (ze:pend)))
   (list (list (- (car p) d) (- (cadr p) d) (caddr p))
@@ -107,6 +109,53 @@
   (setq b (ze:box p) ss (ssget "_C" (car b) (cadr b)))
   (vl-catch-all-apply 'sssetfirst (list nil nil))
   ss)
+
+;; 对象快照 / 图层可编辑判断：与 trim.lsp 的 zt:state / zt:unlocked 完全一致（那边已验证）。
+(defun ze:state (ent / data result sub item)
+  (if (setq data (entget ent))
+    (progn
+      (setq result (list data))
+      (if (= (cdr (assoc 0 data)) "POLYLINE")
+        (progn
+          (setq sub (entnext ent))
+          (while (and sub (setq item (entget sub)) (/= (cdr (assoc 0 item)) "SEQEND"))
+            (setq result (cons item result) sub (entnext sub)))))
+      result)))
+
+(defun ze:unlocked (ent / data layer)
+  (and (setq data (entget ent))
+       (setq layer (tblsearch "LAYER" (cdr (assoc 8 data))))
+       (= 0 (logand 4 (cdr (assoc 70 layer))))))
+
+;; 把选择集里的对象存成「实体名 + 数据快照」，供操作后比对。
+(defun ze:snap (ss / i n e out)
+  (setq out nil)
+  (if ss
+    (progn
+      (setq i 0 n (sslength ss))
+      (while (< i n)
+        (setq e (ssname ss i))
+        (if (ze:unlocked e) (setq out (cons (list e (ze:state e)) out)))
+        (setq i (1+ i)))))
+  out)
+
+;; 本次选择会碰到哪些对象（给「删掉修剪不到的」用）。
+(defun ze:cand (mode plist)
+  (cond
+    ((equal mode "_C") (ssget "_C" (car plist) (cadr plist)))
+    ((equal mode "_F") (ssget "_F" plist '((0 . "LINE,ARC,CIRCLE,LWPOLYLINE,POLYLINE,ELLIPSE,SPLINE"))))
+    (T nil)))
+
+;; 快速模式专用：AutoCAD 会「删除无法修剪的选定对象」。
+;; ZWCAD 原生不会（2026-09-21 真机实测 T1：不可修剪的对象原样留着、也不报错），
+;; 所以这一条得我们自己补。判据同 trim.lsp 的 zt:trim —— 操作前后实体数据没变 = 没被修剪到。
+;; 这里不打印提示：AutoCAD 对这条没有可抓取的文字，不编造措辞。
+(defun ze:trim-del (snap / n)
+  (setq n 0)
+  (foreach it snap
+    (if (and (ze:unlocked (car it)) (equal (cadr it) (ze:state (car it))))
+      (if (entdel (car it)) (setq n (1+ n)))))
+  n)
 
 (defun ze:union (a b / i n)
   (if (null a) (setq a (ssadd)))
@@ -129,16 +178,21 @@
 (defun ze:cmd (isExt bnd mode plist tail / lst p s)
   (setq s (if bnd bnd (ssget "_X")))
   (if (null s) (setq s ""))
-  (setq lst (list (if isExt "_.EXTEND" "_.TRIM") s "" mode))
+  (setq lst (list (if isExt "_.EXTEND" "_.TRIM") s ""))
+  (if mode (setq lst (append lst (list mode))))
   (foreach p plist (setq lst (append lst (list "_non" p))))
   (foreach p tail (setq lst (append lst (list p))))
   (apply 'command lst))
 
 ;; 一次操作 = 一个 UNDO 组，配合「放弃(U)」的 (_.UNDO 1) 粒度。
-(defun ze:apply (isExt mode plist tail / doc)
+(defun ze:apply (isExt mode plist tail cand / doc snap)
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
+  ;; 快照必须在执行「之前」拍：操作后再拍就变成「自己跟自己比」，永远判成没修剪到，
+  ;; 结果把修剪成功的对象也一起删掉（真机实测踩过）。
+  (setq snap (ze:snap cand))
   (vla-StartUndoMark doc) (setq ze:mark T)
   (ze:cmd isExt ze:bounds mode plist tail)
+  (if (not isExt) (ze:trim-del snap))
   (vla-EndUndoMark doc) (setq ze:mark nil))
 
 (defun ze:close-mark (/ doc)
@@ -149,11 +203,11 @@
         (vl-catch-all-apply 'vla-EndUndoMark (list doc)))
       (setq ze:mark nil))))
 
-;; 一笔轨迹：单点＝单个选择（小交叉框），多点＝栏选。
+;; 一笔轨迹：单点＝单个选择（裸点，让拾取点自己决定剪哪端），多点＝栏选。
 (defun ze:stroke (isExt pts)
   (if (= (length pts) 1)
-    (ze:apply isExt "_C" (ze:box (car pts)) (list ""))
-    (ze:apply isExt "_F" pts (list "" ""))))
+    (ze:apply isExt nil (list (car pts)) (list "") (ze:hit (car pts)))
+    (ze:apply isExt "_F" pts (list "" "") (ze:cand "_F" pts))))
 
 (defun ze:undo () (command "_.UNDO" 1))
 
@@ -228,7 +282,7 @@
                         "\n指定下一个栏选点或拾取/拖动光标: "
                         "\n指定第一个栏选点或拾取/拖动光标: ")))
     (if p (setq pts (append pts (list p))) (setq go nil)))
-  (if (> (length pts) 1) (ze:apply isExt "_F" pts (list "" ""))))
+  (if (> (length pts) 1) (ze:apply isExt "_F" pts (list "" "") (ze:cand "_F" pts))))
 
 ;; 窗交：两个角点交给原生自己选，顺时针规则由原生保证。
 (defun ze:opt-cross (isExt / p1 p2)
@@ -236,7 +290,7 @@
   (if p1
     (progn
       (setq p2 (getpoint p1 "\n指定对角点: "))
-      (if p2 (ze:apply isExt "_C" (list p1 p2) (list ""))))))
+      (if p2 (ze:apply isExt "_C" (list p1 p2) (list "") (ze:cand "_C" (list p1 p2)))))))
 
 ;; 主提示的按键分发，返回更新后的「是否已有操作」。
 (defun ze:key (isExt u k / md)
@@ -297,13 +351,13 @@
         (cond
           (pending
             (setq pts (cons pending pts) pending nil)
-            (ze:apply act "_F" pts (list "" ""))
+            (ze:apply act "_F" pts (list "" "") (ze:cand "_F" pts))
             (setq u T))
           ((= (length pts) 1)
             (if (ze:hit (car pts))
-              (progn (ze:apply act "_C" (ze:box (car pts)) (list "")) (setq u T))
+              (progn (ze:apply act nil (list (car pts)) (list "") (ze:hit (car pts))) (setq u T))
               (setq pending (car pts))))
-          (T (ze:apply act "_F" pts (list "" "")) (setq u T))))
+          (T (ze:apply act "_F" pts (list "" "") (ze:cand "_F" pts)) (setq u T))))
       ((equal kind "EMPTY")
         (princ "\n请单击对象，或按住左键划过对象。"))
       ((equal kind "ERROR")

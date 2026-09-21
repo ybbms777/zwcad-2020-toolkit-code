@@ -109,6 +109,9 @@
 
 (defun c:TR () (zt:run nil 'zt:capture))
 (defun c:ZT () (zt:run nil 'zt:capture))
+;; TRD = 拖动修剪。必须是真 defun —— ZWCAD 的命令查找不认 (setq c:TRD c:TR)
+;; 这种「值别名」（变量有值但命令不注册，敲 TRD 会报未知命令）。
+(defun c:TRD () (zt:run nil 'zt:capture))
 (defun c:ZTY () (zt:run T 'zt:capture))
 (princ "\nTR 拖动修剪已就绪。")
 (princ)

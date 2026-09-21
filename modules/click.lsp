@@ -61,9 +61,8 @@
   (setvar "CMDECHO" echo) (setvar "OSMODE" snap)
   (princ))
 
-;; Keep the drag versions before overriding (ZT already covers drag trim).
-(if (and c:TR (not c:TRD)) (setq c:TRD c:TR))
-(if (and c:EX (not c:EXD)) (setq c:EXD c:EX))
+;; 拖动版 TRD / EXD 现在由 trim.lsp / extend.lsp 用真 defun 定义（见那两处注释）。
+;; 原来这里是 (setq c:TRD c:TR)，在 ZWCAD 上不生效：命令不会注册，敲 TRD 报未知命令。
 (defun c:TR () (click:trim))
 (defun c:TRC () (click:trim))
 (defun c:EX () (click:extend))

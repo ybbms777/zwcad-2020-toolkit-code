@@ -85,6 +85,8 @@
   (princ))
 
 (defun c:EX () (zx:run nil 'zx:capture))
+;; EXD = 拖动延伸。同 TRD：ZWCAD 不认值别名，必须真 defun。
+(defun c:EXD () (zx:run nil 'zx:capture))
 (defun c:EXY () (zx:run T 'zx:capture))
 (princ "\n整合延伸模块已加载：EX 单击或拖动延伸，按住 Shift 修剪；EXY 仅校验轨迹。")
 (princ)

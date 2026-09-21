@@ -96,9 +96,9 @@
       (setq c:ZD nil c:ZD2 nil c:ZDO nil c:ZDB nil c:ZDJ nil c:ZDJ3 nil))
     ;; click.lsp 常驻点选版 TR/EX：已定义时不再回退原生命令。
     (if (not (member "trim" zwk:enabled))
-      (progn (if (not c:TR) (defun c:TR () (command "_.TRIM") (princ))) (setq c:ZT nil c:ZTY nil)))
+      (progn (if (not c:TR) (defun c:TR () (command "_.TRIM") (princ))) (setq c:ZT nil c:ZTY nil c:TRD nil)))
     (if (not (member "extend" zwk:enabled))
-      (progn (if (not c:EX) (defun c:EX () (command "_.EXTEND") (princ))) (setq c:EXY nil)))
+      (progn (if (not c:EX) (defun c:EX () (command "_.EXTEND") (princ))) (setq c:EXY nil c:EXD nil)))
     (if (not (member "tolerance" zwk:enabled)) (setq c:GC nil))
     (if (not (member "symbols" zwk:enabled)) (setq c:FH nil))
     (if (not (member "font" zwk:enabled)) (setq c:ZF nil c:ZFD nil))

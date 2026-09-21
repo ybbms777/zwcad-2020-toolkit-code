@@ -331,7 +331,27 @@
        (equal (cadr (getvar "VIEWDIR")) 0.0 1e-8)
        (> (caddr (getvar "VIEWDIR")) 0.0)))
 
+;; ============================================================ 光标
+;; 进 TR / EX 时把十字光标缩到最小，只剩中间那个小方块（就是 AutoCAD 的样子）。
+;; 注意：CURSORSIZE 是全局设置，退出时必须原样还原，所以挂在 ze:restore 上，
+;; 正常结束和出错（*error*）两条路都会经过它。ZWCAD 若不支持该变量则自动跳过。
+(setq ze:cur nil)
+
+(defun ze:cursor-on (/ v)
+  (setq v (vl-catch-all-apply 'getvar (list "CURSORSIZE")))
+  (if (vl-catch-all-error-p v)
+    nil
+    (progn
+      (setq ze:cur v)
+      (vl-catch-all-apply 'setvar (list "CURSORSIZE" 1)))))
+
+(defun ze:cursor-off ()
+  (if ze:cur
+    (progn (vl-catch-all-apply 'setvar (list "CURSORSIZE" ze:cur))
+           (setq ze:cur nil))))
+
 (defun ze:restore (echo snap)
+  (ze:cursor-off)
   (if echo (setvar "CMDECHO" echo))
   (if snap (setvar "OSMODE" snap))
   (redraw))
@@ -372,6 +392,7 @@
 
 (defun ze:run (isExt / *error* echo snap)
   (setq echo (getvar "CMDECHO") snap (getvar "OSMODE"))
+  (ze:cursor-on)
   (defun *error* (msg)
     (ze:close-mark)
     (ze:restore echo snap)

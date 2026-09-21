@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -43,7 +43,7 @@ public class ZWKitMouse
                     if (!GetIconInfo(icon, out info)) throw new InvalidOperationException("无法创建准星。");
                     try
                     {
-                        info.Icon = false; info.X = 16; info.Y = 16;
+                        info.Icon = false; info.X = 7; info.Y = 7;
                         handle = CreateIconIndirect(ref info);
                     }
                     finally { DeleteObject(info.Mask); DeleteObject(info.Color); }
@@ -55,23 +55,18 @@ public class ZWKitMouse
             // Balance only increments made by this command; do not alter persistent CAD settings.
             for (int i = 0; i < 64; i++) { shows++; if (ShowCursor(true) >= 0) break; }
         }
+        // AutoCAD 的样子：没有十字臂，只有中间一个小方框（ZWCAD 侧靠 CURSORSIZE=1 也是这个形态）。
+        // 黑框套白框，深浅两种底图上都看得清；正中心留一个点当拾取点。
         internal static Bitmap MakeBitmap()
         {
-            Bitmap b = new Bitmap(33, 33, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            Bitmap b = new Bitmap(15, 15, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(b))
-            using (Pen black = new Pen(Color.Black, 3))
-            using (Pen white = new Pen(Color.White, 1))
             {
                 g.Clear(Color.Transparent);
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
-                foreach (Pen p in new Pen[] { black, white })
-                {
-                    g.DrawLine(p, 16, 1, 16, 10); g.DrawLine(p, 16, 22, 16, 31);
-                    g.DrawLine(p, 1, 16, 10, 16); g.DrawLine(p, 22, 16, 31, 16);
-                    g.DrawRectangle(p, 13, 13, 6, 6);
-                }
-                g.FillRectangle(Brushes.Black, 15, 15, 3, 3);
-                g.FillRectangle(Brushes.White, 16, 16, 1, 1);
+                g.FillRectangle(Brushes.Black, 3, 3, 9, 9);
+                g.FillRectangle(Brushes.White, 5, 5, 5, 5);
+                g.FillRectangle(Brushes.Black, 7, 7, 1, 1);
             }
             return b;
         }
@@ -80,7 +75,7 @@ public class ZWKitMouse
         {
             ICONINFO icon;
             if (!GetIconInfo(handle, out icon)) return false;
-            bool hotspot = !icon.Icon && icon.X == 16 && icon.Y == 16;
+            bool hotspot = !icon.Icon && icon.X == 7 && icon.Y == 7;
             DeleteObject(icon.Mask); DeleteObject(icon.Color);
             CURSORINFO state = new CURSORINFO(); state.Size = Marshal.SizeOf(typeof(CURSORINFO));
             return hotspot && GetCursorInfo(ref state) && (state.Flags & 1) != 0;
@@ -117,6 +112,7 @@ public class ZWKitMouse
         IntPtr canvas = IntPtr.Zero;
         Point origin = Point.Empty;      // 绘图区左上角在屏幕上的位置
         Sticker sticker;
+        Sticker cover;
         Bitmap image;
         string paper = "-";
         internal int Hits { get { return lit.Count; } }
@@ -234,32 +230,72 @@ public class ZWKitMouse
                     }
             }
             dirty = Rectangle.FromLTRB(x0, y0, x0+w, y0+h);
-            StickerPaper(origin.X+x0, origin.Y+y0, w, h);
+            if (sticker == null) sticker = new Sticker();
+            bool ok = Paste(sticker, image, origin.X+x0, origin.Y+y0, w, h);
+            paper = sticker.Handle + ",ok=" + ok + ",on=" + sticker.On + ",at=" + sticker.Bounds;
             lit.AddRange(ids);
         }
 
-        // 把画好的高亮贴到置顶透明窗口上（每像素 alpha，只有线条本身不透明，其余点击穿透）。
-        void StickerPaper(int sx, int sy, int w, int h)
+        // 盖住 CAD 那个冻住的准星：进循环时它停在鼠标当时的位置上，之后 CAD 不再重画它，
+// 不盖掉就会和自绘光标同时存在（用户看到的就是「两个准星」）。取一圈像素的众数当背景色，
+// 画一块纯色贴纸压上去；循环结束贴纸销毁，画面自然恢复。
+        internal void Cover(Point p)
         {
-            if (sticker != null) sticker.Show(false);
+            if (canvas == IntPtr.Zero) return;
+            try
+            {
+                if (cover == null) cover = new Sticker();
+                Color bg = SampleCanvas(p, 18);
+                using (Bitmap bmp = new Bitmap(38, 38, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                {
+                    using (Graphics g = Graphics.FromImage(bmp)) g.Clear(bg);
+                    bool ok = Paste(cover, bmp, origin.X + p.X - 19, origin.Y + p.Y - 19, 38, 38);
+                    paper = "cover=" + cover.Handle + ",ok=" + ok;
+                }
+            }
+            catch (System.Exception ex) { paper = "coverERR:" + ex.Message; }
+        }
+
+        Color SampleCanvas(Point p, int r)
+        {
+            var tally = new Dictionary<int, int>();
+            IntPtr dc = GetDC(canvas);
+            try
+            {
+                for (int i = 0; i < 12; i++)
+                {
+                    double a = i * Math.PI / 6;
+                    int c = (int)(GetPixel(dc, p.X + (int)Math.Round(Math.Cos(a)*r), p.Y + (int)Math.Round(Math.Sin(a)*r)) & 0x00FFFFFF);
+                    tally[c] = (tally.ContainsKey(c) ? tally[c] : 0) + 1;
+                }
+            }
+            finally { ReleaseDC(canvas, dc); }
+            int best = 0, bestN = -1;
+            foreach (var kv in tally) if (kv.Value > bestN) { bestN = kv.Value; best = kv.Key; }
+            return Color.FromArgb((best >> 16) & 0xFF, (best >> 8) & 0xFF, best & 0xFF);
+        }
+
+        // 把一块位图贴到置顶透明窗口上（每像素 alpha，只有画上去的像素不透明，其余点击穿透）。
+        bool Paste(Sticker target, Bitmap bmp, int sx, int sy, int w, int h)
+        {
+            target.Show(false);
             IntPtr screenDc = IntPtr.Zero, memDc = IntPtr.Zero, hbitmap = IntPtr.Zero;
             try
             {
-                if (sticker == null) sticker = new Sticker();
                 screenDc = GetDC(IntPtr.Zero);
                 memDc = CreateCompatibleDC(screenDc);
-                hbitmap = image.GetHbitmap(Color.FromArgb(0));
+                hbitmap = bmp.GetHbitmap(Color.FromArgb(0));
                 IntPtr old = SelectObject(memDc, hbitmap);
                 POINT dst = new POINT(sx, sy), src = new POINT(0, 0);
                 SIZE size = new SIZE(w, h);
                 BLENDFUNCTION blend;
                 blend.BlendOp = 0; blend.BlendFlags = 0; blend.SourceConstantAlpha = 255; blend.AlphaFormat = 1;
-                bool ok = UpdateLayeredWindow(sticker.Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref blend, 2);
+                bool ok = UpdateLayeredWindow(target.Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref blend, 2);
                 SelectObject(memDc, old);
-                sticker.Show(true);
-                paper = sticker.Handle + ",ok=" + ok + ",on=" + sticker.On + ",at=" + sticker.Bounds;
+                target.Show(true);
+                return ok;
             }
-            catch (System.Exception ex) { paper = "ERR:" + ex.GetType().Name + ":" + ex.Message; }
+            catch { return false; }
             finally
             {
                 if (hbitmap != IntPtr.Zero) DeleteObject(hbitmap);
@@ -389,6 +425,11 @@ public class ZWKitMouse
                 try { sticker.Dispose(); } catch { }
                 sticker = null;
             }
+            if (cover != null)
+            {
+                try { cover.Dispose(); } catch { }
+                cover = null;
+            }
         }
     }
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L,T,R,B; }
@@ -409,6 +450,7 @@ public class ZWKitMouse
     [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
     [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
     [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
+    [DllImport("gdi32.dll")] static extern uint GetPixel(IntPtr dc, int x, int y);
     [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr h, IntPtr dstDc, ref POINT dst, ref SIZE size, IntPtr srcDc, ref POINT src, int key, ref BLENDFUNCTION blend, int flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
@@ -465,9 +507,8 @@ public class ZWKitMouse
         // 这样 ZWKCAP102 的既有行为与以前完全一致。
         public int Key;
         public int Wheel;
-        // TR / EX 要把鼠标移动交还给 CAD：CAD 自己的准星才会跟着鼠标走。
-        // 否则准星会僵在原地，只能再叠一个自绘光标上去，看起来就是「两个准星」。
-        public bool PassMove;
+        // 说明：捕获循环跑在 CAD 命令内部，这期间 CAD 根本不处理鼠标消息（真机实测），
+        // 所以它的准星必然僵在原地 —— 只能自己画光标，并把那个冻住的准星盖掉。
         public bool PreFilterMessage(ref Message m)
         {
             if (m.Msg == 0x20A) Wheel += unchecked((short)((m.WParam.ToInt64() >> 16) & 65535));
@@ -478,8 +519,6 @@ public class ZWKitMouse
                 else if (k == 85 && !AllowKeys) Undo = true;
                 else if (AllowKeys && Key == 0 && ((k >= 48 && k <= 57) || (k >= 65 && k <= 90))) Key = k;
             }
-            // 只放行「移动」这一条：按键、滚轮照旧全部拦下，免得 CAD 自己开始选择或缩放。
-            if (PassMove && m.Msg == 0x200) return false;
             return (m.Msg >= 0x200 && m.Msg <= 0x20E) ||
                    (m.Msg >= 0x100 && m.Msg <= 0x109);
         }
@@ -616,10 +655,6 @@ public class ZWKitMouse
         if (width < 20 || height < 20) return Status("ERROR");
         var filter = new InputFilter();
         filter.AllowKeys = allowKeys;
-        // TR / EX（ZWKCAP103）：鼠标移动交还给 CAD，用 CAD 自己的准星（配 CURSORSIZE=1
-        // 缩成一个小方块），也就是 AutoCAD 那个样子。拖动修剪（ZWKCAP102）保持老行为不变。
-        filter.PassMove = allowKeys;
-        bool ownCursor = !allowKeys;
         IntPtr canvas = IntPtr.Zero;
         Graphics graphics = null;
         Pen pen = null;
@@ -643,9 +678,18 @@ public class ZWKitMouse
                 CadApp.DocumentManager.MdiActiveDocument.Editor.WriteMessage("\n未找到独立绘图区，已停止以避免准星残留。请使用模型空间单视口。");
                 return Status("ERROR");
             }
-            if (hover != null) hover.Attach(nativeCanvas);
-            if (ownCursor) ClearNativeCrosshair(nativeCanvas);
-            if (ownCursor) precision = new PrecisionCursor();
+            if (hover != null)
+            {
+                hover.Attach(nativeCanvas);
+                // CAD 的准星会冻在「命令启动那一刻」的位置，盖上它，免得和自绘光标同时出现。
+                Point c0 = new Point(0, 0);
+                ClientToScreen(nativeCanvas, ref c0);
+                Point mp = Cursor.Position;
+                mp = new Point(mp.X - c0.X, mp.Y - c0.Y);
+                if (mp.X > 0 && mp.Y > 0 && mp.X < width && mp.Y < height) hover.Cover(mp);
+            }
+            ClearNativeCrosshair(nativeCanvas);
+            precision = new PrecisionCursor();
             while (true)
             {
                 Application.DoEvents();
@@ -694,7 +738,7 @@ public class ZWKitMouse
                             panLast=screen; panning=true;
                         }
                         else panning=false;
-                        if (viewChanged && ownCursor) ClearNativeCrosshair(nativeCanvas);
+                        if (viewChanged) ClearNativeCrosshair(nativeCanvas);
                     }
                     else panning=false;
                     if (precision != null) precision.Refresh();
@@ -790,7 +834,7 @@ public class ZWKitMouse
             if (pen!=null) pen.Dispose();
             if (graphics!=null) graphics.Dispose();
             if (canvas!=IntPtr.Zero) InvalidateRect(canvas,IntPtr.Zero,false);
-            if (ownCursor && nativeCanvas!=IntPtr.Zero) RestoreNativeCrosshair(nativeCanvas);
+            if (nativeCanvas!=IntPtr.Zero) RestoreNativeCrosshair(nativeCanvas);
         }
     }
 }

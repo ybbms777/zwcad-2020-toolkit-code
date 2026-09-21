@@ -1,12 +1,12 @@
 {
-    "version":  "1.2.34",
-    "date":  "2026-09-21 14:13",
+    "version":  "1.2.35",
+    "date":  "2026-09-21 14:38",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "TR / EX：不再出现两个准星——鼠标移动交还给 CAD，CAD 自己的准星跟着鼠标走，不再自绘光标",
-                  "TR / EX：进入命令时把 CURSORSIZE 临时设为 1，准星只剩中间那个小方块（与 AutoCAD 一致），退出（含报错退出）自动还原",
-                  "TR / EX：鼠标压到线上时给出高亮反馈——青色描边贴在实体上，同时 CAD 自身的虚线高亮也生效",
+                  "TR / EX：自绘光标改成 AutoCAD 的形态——只有一个中间小方框，跟着鼠标走",
+                  "TR / EX：把 CAD 冻住的那个准星盖掉（CAD 在命令执行期间不处理鼠标，自带准星必然僵在原地），不再出现两个准星",
+                  "TR / EX：悬停高亮（青色描边）与 CAD 自身虚线高亮保留",
                   "拖动修剪 / 拖动延伸（ZT / TRD / EXD）行为保持不变"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
@@ -14,9 +14,9 @@
     "files":  {
                   ".gitattributes":  "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
                   ".gitignore":  "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-                  "bin/ZWKit.Core.102.dll":  "2321b66e30a72e79d0163812b94f263c28bae4eb92a867de052c5f765abda337",
+                  "bin/ZWKit.Core.102.dll":  "29319add047228d743fa4997fa1544781a8ba46d01087f279d15a10618f0336c",
                   "boot.lsp":  "f975b2a66937732524e05b8476dc31f40ee7ebd988d6cbbe598845ee63a25a1d",
-                  "CHANGELOG.md":  "60827b39869a171f4fc2e3ef85eab3b31b07772c70ee0d39533baf706ccca1f8",
+                  "CHANGELOG.md":  "054843752581ef3497692d00849adc0f7d51489528f820b039710567d1980b0e",
                   "cli.ps1":  "fedf20a7be8a7c4a208fa4051ce2cbf9c1e4d050abc7d44fb9acfa92f0264374",
                   "install.ps1":  "98f45b014d64d28bb6b90e57bf168e98db2fe6f4407f9a51cc4bad4cf55abdb1",
                   "modules.lsp":  "b3afe3b60d90204db5f457b084e9ad4e01cba750d0cc513844db6d1d7bde5894",
@@ -35,7 +35,7 @@
                   "README.md":  "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
                   "src/Bridge.cs":  "061800809435da8d1917fa32bfb49a85932ec1d714f4d66358f26e026ca5a162",
                   "src/build.ps1":  "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
-                  "src/Mouse.cs":  "deb4614dba061c82ba9d3e7809b3581545756723324ac4f8d4127fa8fee3906d",
+                  "src/Mouse.cs":  "9c04a42086dd37a43986f33c60cc081ff7d9e251e35138cde7abe7a5ba6959bd",
                   "update.ps1":  "57333b0c625ab93cce29d11a7d4759672ce59d8de9cc2887c7306b82b1f569ed",
                   "更新.cmd":  "23afc10a38b73c7326b5d4bcd8c2bdb4b2feac25a287981947cdaa12de00d75a",
                   "取消自动加载.cmd":  "eea93443e0de7a8da02e859cc2759c68452881689363ae1a77844fd9d5403634",

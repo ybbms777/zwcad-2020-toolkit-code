@@ -132,6 +132,14 @@ public class ZWKitMouse
         Sticker pick;                    // 光标处那个拾取框方块（每帧跟着走）
         Bitmap image;
         string paper = "-";
+        string viewSig = "";             // 视图指纹：动过视图（平移/缩放）就必须重算，见 ViewSignature
+        // 中键按住时 CAD 自己在平移，这期间 grread 不再派发鼠标事件（真机实测：
+        // 视图确实平移了，但贴纸停在旧位置 —— 用户反馈的「按住中键准星会漂移」）。
+        // 主线程收不到事件，就找一个旁路：只在 TR / EX 交互期间存在的小看门狗线程，
+        // 每 25 毫秒查一次中键，按住就把两个贴纸收起来（只碰我们自己的窗口，
+        // 不调用任何 CAD API，所以线程安全）。松开后主线程在下一个鼠标事件里照常重画。
+        Thread watch;
+        volatile bool watchStop;
         internal int Hits { get { return lit.Count; } }
         internal string Paper { get { return paper; } }
         internal string Bounds { get { return dirty.Width > 0 ? dirty.Left+","+dirty.Top+","+dirty.Right+","+dirty.Bottom : "-"; } }
@@ -184,12 +192,55 @@ public class ZWKitMouse
             sig = ""; last = new Point(int.MinValue, int.MinValue); stamp = DateTime.MinValue;
         }
 
+        // 看门狗：只在 TR / EX 交互期间跑（第一次 Update 起、每次 capture 结束（hover-end）停）。
+        void Watch()
+        {
+            while (!watchStop)
+            {
+                try
+                {
+                    if ((GetAsyncKeyState(4) & 0x8000) != 0)   // VK_MBUTTON
+                    {
+                        if (sticker != null) sticker.Show(false);
+                        if (pick != null) pick.Show(false);
+                    }
+                }
+                catch { }
+                Thread.Sleep(25);
+            }
+        }
+
+        void WatchOn()
+        {
+            if (watch != null) return;
+            watchStop = false;
+            watch = new Thread(Watch);
+            watch.IsBackground = true;
+            watch.Start();
+        }
+
+        internal void WatchOff()
+        {
+            watchStop = true;
+            Thread t = watch;
+            watch = null;
+            if (t != null) { try { t.Join(200); } catch { } }
+        }
+
         // 每帧调用；内部节流（移动 >= 2 像素、距上次 >= 45 毫秒才真的去查），
         // 免得每个 8 毫秒的空转都去问一次选择集。
         // shift = 按住 Shift（延伸模式）：那句提示要延伸，不做「剪掉哪一段」的预览。
         internal void Update(Point p, int width, int height, bool inside, bool shift)
         {
             if (!inside) { Clear(); return; }
+            WatchOn();                                   // 中键平移期间要有人负责收贴纸，见 Watch
+            // 中键按住 = CAD 自己在平移：先把贴纸收起来，别让它们停在旧位置看着像「漂移」。
+            // 松手后靠下面的视图指纹强制重算（2026-09-21 用户反馈「按住中键准星会漂移」）。
+            if (Down(4)) { Clear(); return; }
+            // 视图动过（平移/缩放）就作废重算：平移后光标可能还在同一个像素上，
+            // 只靠「移动 >= 2 像素」的节流会漏掉重算，贴纸会盖在别的图元上。
+            string vs = ViewSignature();
+            if (vs != viewSig) { viewSig = vs; Clear(); }
             PickBox(p);                                  // 方块每帧跟手，不受下面两道节流限制
             if (Math.Abs(p.X-last.X) < 2 && Math.Abs(p.Y-last.Y) < 2) return;
             if ((DateTime.UtcNow-stamp).TotalMilliseconds < 45) return;
@@ -531,6 +582,7 @@ public class ZWKitMouse
 
         public void Dispose()
         {
+            WatchOff();
             Wipe();
             if (pick != null)
             {
@@ -722,6 +774,20 @@ public class ZWKitMouse
         catch { return false; }
     }
 
+    // 视图指纹（视图中心 + 高度 + 转角）：用来判断「视图动过没有」。
+    // 平移/缩放之后光标可能还停在同一个像素上，只靠「移动 >= 2 像素」的节流会漏掉重算，
+    // 悬停贴纸就会留在旧位置、盖住平移后的别的图元（真机反馈的「中键漂移」就是这么来的）。
+    static string ViewSignature()
+    {
+        try
+        {
+            var c = (ZwSoft.ZwCAD.Geometry.Point3d)CadApp.GetSystemVariable("VIEWCTR");
+            return N(c.X) + "," + N(c.Y) + "," + Convert.ToString(CadApp.GetSystemVariable("VIEWSIZE"))
+                 + "," + Convert.ToString(CadApp.GetSystemVariable("VIEWTWIST"));
+        }
+        catch { return ""; }
+    }
+
     // UCS→WCS 矩阵，用来把 WCS 点换算成 ZWCAD 选择集接口要的 UCS 点。
     // ZWCAD 2020 的 UCSXDIR / UCSYDIR 返回的是 Point3d（AutoCAD 是 Vector3d，实测如此）。
     static bool TryWcsToUcs(out ZwSoft.ZwCAD.Geometry.Matrix3d w2u)
@@ -907,7 +973,7 @@ public class ZWKitMouse
     [LispFunction("ZWK_HOVER_END_101")]
     public static ResultBuffer HoverOff(ResultBuffer args)
     {
-        try { if (hover != null) hover.Clear(); } catch { }
+        try { if (hover != null) { hover.Clear(); hover.WatchOff(); } } catch { }
         return Status("OK");
     }
 

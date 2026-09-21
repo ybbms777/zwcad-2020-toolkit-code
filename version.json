@@ -1,6 +1,6 @@
 {
     "version":  "1.2.32",
-    "date":  "2026-09-21 10:31",
+    "date":  "2026-09-21 10:40",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
@@ -15,7 +15,7 @@
                   ".gitignore":  "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
                   "bin/ZWKit.Core.102.dll":  "f81d71dfebb53ff4f081e5d301e5fafca33ec57c77d3cf4fc34015a76c7e6739",
                   "boot.lsp":  "918de1b7edeb921ad376052939913ae9bc045ff46b0fddedf2098889f98f1afc",
-                  "CHANGELOG.md":  "d5112eba0579229a38550f3b21349bf09cd244fc5e0c4e24b18b76838aa881e7",
+                  "CHANGELOG.md":  "301a84a13f347f686f97e287d402fbb786ba27d9d02b886b0a5edd20fab5021a",
                   "cli.ps1":  "fedf20a7be8a7c4a208fa4051ce2cbf9c1e4d050abc7d44fb9acfa92f0264374",
                   "install.ps1":  "98f45b014d64d28bb6b90e57bf168e98db2fe6f4407f9a51cc4bad4cf55abdb1",
                   "modules.lsp":  "b3afe3b60d90204db5f457b084e9ad4e01cba750d0cc513844db6d1d7bde5894",

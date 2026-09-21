@@ -1,21 +1,21 @@
 {
-    "version":  "1.2.40",
-    "date":  "2026-09-21 18:02",
+    "version":  "1.2.41",
+    "date":  "2026-09-21 18:21",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "修复：TR / EX 悬停高亮不再被标注线（尺寸线、尺寸界线）截断 —— 修剪边界只认真正的曲线；压到尺寸/文字/引线/公差/填充上也不会再亮出一整块外框",
-                  "调整：触发范围改成跟着 CAD 的「拾取框」（PICKBOX，例如 8 像素）走，并在光标处显示一个同尺寸的小方块；原来固定 ±2 像素，又看不见又点不准",
-                  "调整：TR / EX 期间不再改 CURSORSIZE，十字光标大小保持你自己的设置（想要方块就调拾取框大小）"
+                  "修复：按住中键平移时，青色高亮和光标方块不再停在原地（现在平移期间自动收起，松手后回到光标处；视图一变也强制重算）",
+                  "调整：进了 TR / EX 十字光标自动缩到最小、只剩光标处那个拾取框方块，退出立刻恢复你自己的设置，其余时间完全不变",
+                  "使用说明：更正为「TR / EX 期间中键拖动可以平移；滚轮缩放不可用」"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
     "files":  {
                   ".gitattributes":  "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
                   ".gitignore":  "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
-                  "bin/ZWKit.Core.102.dll":  "d292985788a8b8a060050a84e610bc21a32480a449629609ee5e9ac14fe8ff90",
+                  "bin/ZWKit.Core.102.dll":  "5aaba78cda2c34c3b76f85acee3a44e67e348880478bd8a98159d0287e2d437f",
                   "boot.lsp":  "f975b2a66937732524e05b8476dc31f40ee7ebd988d6cbbe598845ee63a25a1d",
-                  "CHANGELOG.md":  "b5455c984048d496b3f07ba2c0b16666bb809e9fa2926240c7846a1fd9961121",
+                  "CHANGELOG.md":  "598a70959b5b754da320760ab32accc6eca8c4687c7cbd84710d1e006f776833",
                   "cli.ps1":  "fedf20a7be8a7c4a208fa4051ce2cbf9c1e4d050abc7d44fb9acfa92f0264374",
                   "install.ps1":  "98f45b014d64d28bb6b90e57bf168e98db2fe6f4407f9a51cc4bad4cf55abdb1",
                   "modules.lsp":  "b3afe3b60d90204db5f457b084e9ad4e01cba750d0cc513844db6d1d7bde5894",
@@ -30,15 +30,15 @@
                   "modules/tkblock.lsp":  "10024bee0738b34ddb5107a8e404ffc3e2f775ce40861b8182f16f4fc880ee25",
                   "modules/tolerance.lsp":  "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
                   "modules/trim.lsp":  "417da78be26a71e73c84bdac30e17d84fa6f9ea3d3463bbfbf5e69d442c417dc",
-                  "modules/trimext.lsp":  "5c3db35e8f6edd1d0ed63fa9819112ff7cdf91b9c35da96391c60202c8ee4be4",
+                  "modules/trimext.lsp":  "3bda42df3435e9d227afeaa6d7554632cfea5eef5d0ab31ea27265a14e351da1",
                   "README.md":  "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
                   "src/Bridge.cs":  "2f34431a432026dee8b0c0bd1b4db4e9e81b707b819595949e39c8ecb6cf6375",
                   "src/build.ps1":  "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
-                  "src/Mouse.cs":  "1c1e46e1c69ccdbed6c70fcd64dee9f368a00bf300e4e872057dfe975bffa067",
+                  "src/Mouse.cs":  "64d113ef03ac48ea28457ef1e2ec7b5c9529c673b135b0981327895068af1734",
                   "update.ps1":  "57333b0c625ab93cce29d11a7d4759672ce59d8de9cc2887c7306b82b1f569ed",
                   "更新.cmd":  "23afc10a38b73c7326b5d4bcd8c2bdb4b2feac25a287981947cdaa12de00d75a",
                   "取消自动加载.cmd":  "eea93443e0de7a8da02e859cc2759c68452881689363ae1a77844fd9d5403634",
-                  "使用说明.md":  "d9f3a951c4456def3c033d72c3d43b81bb2c8e4a9fc267b2393377e1b4c850e5",
+                  "使用说明.md":  "2f771dfeb5adc62bf1a16c850a08d6c6051233674fe3f076f208d76218798d11",
                   "一键安装.cmd":  "8eea6e887e556507cf0c4538cccb2d27c86aa68a92cb3eadf8453847fe9905b8"
               }
 }

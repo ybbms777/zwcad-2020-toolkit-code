@@ -553,13 +553,29 @@
        (> (caddr (getvar "VIEWDIR")) 0.0)))
 
 ;; ============================================================ 光标
-;; 不再改 CURSORSIZE。ZWCAD 的 CURSORSIZE=1 只是「一小截十字」，不是 AutoCAD 那种
-;; 「小方块」；用户要的是拾取框方块，所以改成由 DLL 在光标处贴一个 PICKBOX 大小的
-;; 方块（ZWK_HOVER_101 里画，见 Mouse.cs 的 PickBox），十字光标保持用户自己的设置。
-;; 2026-09-21 用户反馈：「准星只能十字吗？不能用小正方形准星吗？十字触发面积太小了」
-;; —— 触发面积与 CURSORSIZE 无关（原来写死 ±2 像素），现在光圈就是那个方块。
+;; TR / EX 期间把十字缩到最小，让 DLL 贴的那个「拾取框方块」成为唯一显眼的东西 ——
+;; 就是用户要的「进了 TR / EX 才变成方块，其余时间不变」（2026-09-21）。
+;; 触发范围与十字大小无关：光圈 = PICKBOX（见 ze:pick），方块画多大、触发就多大。
+;; CURSORSIZE 是全局设置，退出时必须原样还原，所以挂在 ze:restore 上，
+;; 正常结束和出错（*error*）两条路都会经过它；ZWCAD 不支持该变量就自动跳过。
+(setq ze:cur nil)
+
+(defun ze:cursor-on (/ v)
+  (setq v (vl-catch-all-apply 'getvar (list "CURSORSIZE")))
+  (if (vl-catch-all-error-p v)
+    nil
+    (progn
+      (setq ze:cur v)
+      (vl-catch-all-apply 'setvar (list "CURSORSIZE" 1)))))
+
+(defun ze:cursor-off ()
+  (if ze:cur
+    (progn
+      (vl-catch-all-apply 'setvar (list "CURSORSIZE" (fix ze:cur)))
+      (setq ze:cur nil))))
 
 (defun ze:restore (echo snap)
+  (ze:cursor-off)
   (if echo (setvar "CMDECHO" echo))
   (if snap (setvar "OSMODE" snap))
   (redraw))
@@ -603,6 +619,7 @@
 
 (defun ze:run (isExt / *error* echo snap)
   (setq echo (getvar "CMDECHO") snap (getvar "OSMODE"))
+  (ze:cursor-on)
   (defun *error* (msg)
     (ze:dbg (strcat "ERROR " (vl-princ-to-string msg)))
     (ze:close-mark)

@@ -1,7 +1,8 @@
 ;;; trimext.lsp --- AutoCAD 2025 TRIM / EXTEND 交互层复刻（B 线，规格书 3.3）。
 ;;; 提示文本逐字取自 AutoCAD 2025 简体中文实机抓取（规格书 3.4），不要凭印象改措辞。
 ;;; 几何层委托 ZWCAD 原生 TRIM / EXTEND，用 CMDECHO=0 屏蔽它自己的提示（规格书 3.2 T1）。
-;;; 鼠标手势走 bin/ZWKit.Core.102.dll 的 ZWKCAP103（比 ZWKCAP102 多回传按键）。
+;;; 鼠标手势走 CAD 自己的 grread 跟踪模式（准星才是 CAD 原生那一个）。悬停高亮 / 笔画 /
+;;; Shift 与左键状态借 bin/ZWKit.Core.102.dll 的 ZWK_*_101 一组接口（LispFunction 直调）。
 ;;; 分发文件是 GBK 编码。
 (vl-load-com)
 
@@ -107,6 +108,7 @@
 
 (defun ze:hit (p / b ss)
   (setq b (ze:box p) ss (ssget "_C" (car b) (cadr b)))
+  (ze:dbg (strcat "hit " (vl-princ-to-string p) " -> " (if ss (itoa (sslength ss)) "nil")))
   (vl-catch-all-apply 'sssetfirst (list nil nil))
   ss)
 
@@ -182,10 +184,12 @@
   (if mode (setq lst (append lst (list mode))))
   (foreach p plist (setq lst (append lst (list "_non" p))))
   (foreach p tail (setq lst (append lst (list p))))
+  (ze:dbg (strcat "cmd=" (vl-princ-to-string (mapcar 'type lst))))
   (apply 'command lst))
 
 ;; 一次操作 = 一个 UNDO 组，配合「放弃(U)」的 (_.UNDO 1) 粒度。
 (defun ze:apply (isExt mode plist tail cand / doc snap)
+  (ze:dbg (strcat "apply isExt=" (vl-princ-to-string isExt) " mode=" (vl-princ-to-string mode)))
   (setq doc (vla-get-ActiveDocument (vlax-get-acad-object)))
   ;; 快照必须在执行「之前」拍：操作后再拍就变成「自己跟自己比」，永远判成没修剪到，
   ;; 结果把修剪成功的对象也一起删掉（真机实测踩过）。
@@ -307,22 +311,206 @@
     ((equal k "U") (if u (ze:undo) (ze:bad isExt)) u)
     (T (ze:bad isExt) u)))
 
-;; ============================================================ 鼠标捕捉（ZWKCAP103）
-;; 返回 ("KEY" "C") / ("STROKE" 点表) / ("CANCEL" nil) / ("EMPTY" nil) / ("ERROR" nil)。
-;; 笔画带 Shift 时 DLL 会加 "TRIM" 前缀，这里翻成 ze:shift。
-(defun ze:capture (/ r)
-  (setq ze:shift nil r (zwk:bridge "ZWKCAP103"))
-  (if (and (listp r) (= (length r) 1) (listp (car r))) (setq r (car r)))
-  (cond
-    ((not (listp r)) (list "ERROR" nil))
-    ((equal (car r) "TRIM") (setq ze:shift T) (list "STROKE" (cdr r)))
-    ((equal (car r) "KEY") (list "KEY" (cadr r)))
-    ((and (listp (car r)) (numberp (caar r))) (list "STROKE" r))
-    (T (list (car r) nil))))
+;; ============================================================ 鼠标捕捉（CAD 原生 grread）
+;; 为什么不用自建消息循环：命令内部自己起循环时 CAD 根本不处理鼠标消息（2026-09-21 真机实测），
+;; 它的准星必然僵在原地 —— 只能拿假光标顶上，看着别扭。grread 是 CAD 自己的输入循环，
+;; 准星由它自己管、正常跟随鼠标（配 CURSORSIZE=1 就是 AutoCAD 那种小十字）。
+;; 真机抓取到的 grread 事件：
+;;   (5 (x y 0)) 移动    (3 (x y 0)) 左键按下    (25 (x y 0)) 右键    (2 n) 键盘
+;;   Esc 时 grread 直接报「函数被取消」；左键「松开」不产生任何事件（只能查按键状态）。
+;;   坐标就是 UCS 点，和 ssget / getpoint 一套；与屏幕比例坐标的换算见 ze:frac / ze:ptf。
+(setq ze:grk nil)
+(setq ze:hwarn nil)
 
+;; 排查用的步骤日志：只有设了环境变量 ZWK_TRIMDEBUG=1 才写 %TEMP%\zwk-trim-debug.txt。
+;; 正常使用完全不产生文件，出问题时让同事设一下变量、把日志发回来即可。
+(defun ze:dbg (s / f)
+  (if (getenv "ZWK_TRIMDEBUG")
+    (progn
+      (setq f (open (strcat (getenv "TEMP") "/zwk-trim-debug.txt") "a"))
+      (if f (progn (write-line s f) (close f))))))
+
+;; A-Z 的字符（不依赖 chr）。
+(defun ze:ch (n / base)
+  (setq base "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+  (cond ((and (>= n 65) (<= n 90)) (substr base (- n 64) 1))
+        ((and (>= n 97) (<= n 122)) (substr base (- n 96) 1))
+        (T "")))
+
+;; 读一个 grread 事件：("MOVE"/"PRESS"/"KEY"/"RIGHT"/"ENTER"/"CANCEL"/"OTHER") + 点或字符。
+(defun ze:next (/ k p)
+  (setq k (vl-catch-all-apply 'grread (list T 13 0)) ze:grk k)
+  (cond
+    ((vl-catch-all-error-p k)
+      (ze:dbg (strcat "grread-err=" (vl-catch-all-error-message k)))
+      (list "CANCEL" nil))
+    ((not (listp k)) (list "OTHER" nil))
+    ((= (car k) 5) (list "MOVE" (cadr k)))
+    ((= (car k) 3) (list "PRESS" (cadr k)))
+    ((= (car k) 25) (list "RIGHT" (cadr k)))
+    ((= (car k) 2)
+      (setq p (cadr k))
+      (cond ((and (numberp p) (= p 27)) (list "CANCEL" nil))
+            ((and (numberp p) (or (= p 13) (= p 32))) (list "ENTER" nil))
+            ((numberp p) (list "KEY" (ze:ch p)))
+            (T (list "OTHER" nil))))
+    (T (list "OTHER" nil))))
+
+;; ===== DLL 小工具（bin/ZWKit.Core.102.dll）=====
+;; 直接调 LispFunction，不走 zwk:bridge 的临时文件：每个鼠标事件都过一遍文件太慢。
+;; 三个真机踩过的坑（ZWCAD 2020，2026-09-21）：
+;;   1) LispFunction 的回包在 LISP 里是「一个元素的表」——("OK;3") 而不是 "OK;3"，这里统一拆开；
+;;   2) 零参数的包装函数不能用 (vl-catch-all-apply 'F (list 0)) 调（会报「参数太多」），传 nil；
+;;   3) 函数不存在时报的「undefined function」vl-catch-all-apply 拦不住，所以先用 ze:ready 自检版本。
+(defun ze:dll (f a / r v)
+  (setq r (vl-catch-all-apply f (if a a nil)))
+  (cond
+    ((vl-catch-all-error-p r) nil)
+    ((null r) nil)
+    ((listp r) (setq v (car r)) (if (stringp v) v nil))
+    ((stringp r) r)
+    (T nil)))
+
+(defun zwk:module () (ze:dll 'ZWK_MODULE_101 nil))
+(defun zwk:shift () (ze:dll 'ZWK_SHIFT_101 nil))
+(defun zwk:state () (ze:dll 'ZWK_STATE_101 nil))
+(defun zwk:hover (f) (ze:dll 'ZWK_HOVER_101 f))
+(defun zwk:hover-end () (ze:dll 'ZWK_HOVER_END_101 nil))
+(defun zwk:press (f ms) (ze:dll 'ZWK_PRESS_101 (append f (list ms))))
+(defun zwk:ink (f red) (ze:dll 'ZWK_INK_101 (append f (list red))))
+(defun zwk:ink-end () (ze:dll 'ZWK_INK_END_101 nil))
+
+;; 左键按着吗（DLL 回包 "1;fx;fy" 的第一段）。
+(defun zwk:down (/ s)
+  (setq s (zwk:state))
+  (and (stringp s) (= (substr s 1 1) "1")))
+
+;; "UP;0.5123;0.4" -> ("UP" 0.5123 0.4)；解析不出来就是 nil。
+(defun ze:stat (s / i n c out cur v)
+  (if (not (stringp s)) (setq s ""))
+  (setq i 1 n (strlen s) out nil cur "")
+  (while (<= i n)
+    (setq c (substr s i 1))
+    (if (= c ";") (setq out (cons cur out) cur "") (setq cur (strcat cur c)))
+    (setq i (1+ i)))
+  (setq out (reverse (cons cur out)))
+  (if (/= (car out) "")
+    (cons (car out)
+          (mapcar '(lambda (x)
+                     (setq v (vl-catch-all-apply 'atof (list x)))
+                     (if (numberp v) v 0.0))
+                  (cdr out)))))
+
+;; ===== 坐标换算 =====
+;; UCS 点 -> 屏幕比例坐标（0,0 = 绘图区左下角，与 DLL 里的口径一致）。
+(defun ze:frac (p / v w h ctr d)
+  (setq v (ze:view) w (car v) h (cadr v) ctr (caddr v) d (trans p 1 2))
+  (list (+ 0.5 (/ (- (car d) (car ctr)) w))
+        (+ 0.5 (/ (- (cadr d) (cadr ctr)) h))))
+
+;; 屏幕比例 -> UCS 点（复用 ze:wpts）。
+(defun ze:ptf (f) (car (ze:wpts (list f))))
+
+;; 两个 UCS 点在屏幕上的像素距离（distance 必须是两点两个参数）。
+(defun ze:px (p1 p2 / f1 f2 sz)
+  (setq f1 (ze:frac p1) f2 (ze:frac p2) sz (getvar "SCREENSIZE"))
+  (distance (list (* (- (car f1) (car f2)) (car sz))
+                  (* (- (cadr f1) (cadr f2)) (cadr sz)) 0.0)
+            (list 0.0 0.0 0.0)))
+
+;; ===== 悬停高亮 =====
+;; 压到哪条线，哪条线亮起来（DLL 算实体的屏幕折线，画在置顶透明窗上）。
+(defun ze:hover (p / r)
+  (setq r (zwk:hover (ze:frac p))
+        ze:hovst r)
+  (if (and (not ze:hwarn) (or (null r) (/= (substr r 1 2) "OK")))
+    (progn (setq ze:hwarn T)
+           (princ (strcat "\n悬停高亮不可用（" (if r r "无响应") "）。")))))
+
+;; ===== 一次拾取手势 =====
+;; 返回 ("KEY" "C") / ("STROKE" 点表) / ("CANCEL" nil)。
+;; 单击 = 1 点（ze:loop 按「单点拾取」处理）；按住拖动 = 多点（按栏选处理）。
+(defun ze:capture (/ e kind pt res done)
+  (setq res nil done nil ze:shift nil)
+  (ze:dbg "capture-start")
+  (while (not done)
+    (setq e (ze:next) kind (car e) pt (cadr e))
+    ;; 注意：键盘事件的 pt 是字符串（"T" 这种），这里不能拿它当点用（rtos / car 都会报参数类型错误）。
+    (ze:dbg (strcat "ev=" kind " data=" (vl-princ-to-string pt)))
+    (cond
+      ((equal kind "MOVE") (ze:hover pt))
+      ((equal kind "PRESS") (setq res (ze:gesture pt)))
+      ((equal kind "KEY") (setq res e))
+      ((or (equal kind "RIGHT") (equal kind "ENTER") (equal kind "CANCEL"))
+        (setq res (list "CANCEL" nil))))
+    (if res (setq done T)))
+  (ze:dbg (strcat "capture-end res=" (vl-princ-to-string res)))
+  (zwk:hover-end)
+  (zwk:ink-end)
+  res)
+
+;; 左键按下之后：点一下就松 = 单击；按住并移动 = 拖动（笔画）。
+;; ze:shift 在「按下那一刻」锁定，之后中途按过 Shift 整笔都算（与 1.2.34 的行为一致）。
+(defun ze:gesture (p / st r q pts e kind done)
+  (ze:dbg (strcat "gesture p=" (vl-princ-to-string p) " frac=" (vl-princ-to-string (ze:frac p)) " shift=" (vl-princ-to-string (zwk:shift))))
+  (setq st (equal (zwk:shift) "1")
+        r (ze:stat (zwk:press (ze:frac p) 260))
+        pts nil done nil)
+  (ze:dbg (strcat "press=" (vl-princ-to-string r)))
+  (if (equal (zwk:shift) "1") (setq st T))
+  (cond
+    ;; 松开了：单击；极快的短划（>4 像素）算两点的一段栏选。
+    ((or (null r) (equal (car r) "UP"))
+      (ze:dbg "branch=up")
+      (setq ze:shift st)
+      (if (and r (>= (length r) 3) (> (ze:px p (ze:ptf (cdr r))) 4.0))
+        (list "STROKE" (list p (ze:ptf (cdr r))))
+        (list "STROKE" (list p))))
+    ((equal (car r) "OUT") (ze:dbg "branch=out") (list "CANCEL" nil))
+    (T
+      (ze:dbg "branch=hold")
+      ;; 还按着：再给 150 毫秒 —— 只有「停住没动」才会等满，动一下就立刻回来。
+      ;; 这一下是为了把「按住停一会儿再松手」也认成单击，不至于卡在那里等下一次移动。
+      (setq r (ze:stat (zwk:press (ze:frac p) 150)))
+      (ze:dbg (strcat "press2=" (vl-princ-to-string r)))
+      (if (or (null r) (equal (car r) "UP"))
+        (progn (setq ze:shift st) (list "STROKE" (list p)))
+        (progn
+          (ze:dbg "branch=drag")
+          ;; 拖动：笔画跟着鼠标走，松开时结算成一笔栏选
+          (setq pts (list p))
+          (zwk:ink (ze:frac p) (if st 1 0))
+          (while (not done)
+            (setq e (ze:next) kind (car e))
+            (cond
+              ((equal kind "MOVE")
+                (setq q (cadr e))
+                ;; 先判松开：松开之后的那一次移动不该再算进笔画里。
+                (if (not (zwk:down))
+                  (setq done T)
+                  (progn
+                    (if (> (ze:px (car pts) q) 0.2)
+                      (progn (setq pts (cons q pts)) (zwk:ink (ze:frac q) (if st 1 0))))
+                    (if (equal (zwk:shift) "1") (setq st T))
+                    ;; grread 不给「松开」事件，只能查（见 ze:next 的注释）。
+                    (setq r (ze:stat (zwk:press (ze:frac q) 200)))
+                    (if (or (null r) (equal (car r) "UP") (equal (car r) "OUT")) (setq done T)))))
+              ((equal kind "CANCEL") (setq pts nil done T))
+              ((equal kind "PRESS") nil)
+              (T (if (not (zwk:down)) (setq done T)))))
+          (ze:dbg (strcat "drag-end pts=" (vl-princ-to-string (length pts)) " st=" (vl-princ-to-string st)))
+          (zwk:ink-end)
+          (cond
+            ((null pts) (list "CANCEL" nil))
+            ((> (length pts) 2048)
+              (princ "\n本次轨迹过长，已取消；请分几笔修剪。")
+              (list "CANCEL" nil))
+            (T (setq ze:shift st) (list "STROKE" (reverse pts)))))))))
+
+;; 新版 DLL 自检：ZWK_MODULE_101 返回 "READY2"（1.2.35 及以前是 "READY"，没有这些接口）。
 (defun ze:ready (/ r)
   (setq r (vl-catch-all-apply 'zwk:ready nil))
-  (and (not (vl-catch-all-error-p r)) r))
+  (and (not (vl-catch-all-error-p r)) r (equal (zwk:module) "READY2")))
 
 (defun ze:planar ()
   (and (= (getvar "TILEMODE") 1)
@@ -347,8 +535,11 @@
 
 (defun ze:cursor-off ()
   (if ze:cur
-    (progn (vl-catch-all-apply 'setvar (list "CURSORSIZE" ze:cur))
-           (setq ze:cur nil))))
+    (progn
+      (ze:dbg (strcat "cursor-off cur=" (vl-princ-to-string ze:cur) " fix=" (vl-princ-to-string (fix ze:cur))
+                      " r=" (vl-princ-to-string (vl-catch-all-apply 'setvar (list "CURSORSIZE" (fix ze:cur))))
+                      " now=" (vl-princ-to-string (vl-catch-all-apply 'getvar (list "CURSORSIZE")))))
+      (setq ze:cur nil))))
 
 (defun ze:restore (echo snap)
   (ze:cursor-off)
@@ -362,11 +553,13 @@
   (princ (ze:prompt isExt u))
   (while go
     (setq res (ze:capture) kind (car res) data (cadr res))
+    (ze:dbg (strcat "loop kind=" kind " n=" (if (listp data) (vl-princ-to-string (length data)) (vl-princ-to-string data))))
     (cond
       ((equal kind "KEY")
         (setq u (ze:key isExt u data)))
       ((equal kind "STROKE")
-        (setq pts (ze:wpts data)
+        ;; data 已经是 UCS 点（grread 给的就是 UCS），不用再过 ze:wpts（那是比例坐标用的）。
+        (setq pts data
               act (if ze:shift (not isExt) isExt))
         (cond
           (pending
@@ -394,6 +587,7 @@
   (setq echo (getvar "CMDECHO") snap (getvar "OSMODE"))
   (ze:cursor-on)
   (defun *error* (msg)
+    (ze:dbg (strcat "ERROR " (vl-princ-to-string msg)))
     (ze:close-mark)
     (ze:restore echo snap)
     (if (and msg (not (wcmatch (strcase msg) "*CANCEL*,*QUIT*,*BREAK*,*取消*,*退出*")))

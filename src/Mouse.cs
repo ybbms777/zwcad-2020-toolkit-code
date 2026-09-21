@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -112,7 +113,6 @@ public class ZWKitMouse
         IntPtr canvas = IntPtr.Zero;
         Point origin = Point.Empty;      // 绘图区左上角在屏幕上的位置
         Sticker sticker;
-        Sticker cover;
         Bitmap image;
         string paper = "-";
         internal int Hits { get { return lit.Count; } }
@@ -236,47 +236,9 @@ public class ZWKitMouse
             lit.AddRange(ids);
         }
 
-        // 盖住 CAD 那个冻住的准星：进循环时它停在鼠标当时的位置上，之后 CAD 不再重画它，
-// 不盖掉就会和自绘光标同时存在（用户看到的就是「两个准星」）。取一圈像素的众数当背景色，
-// 画一块纯色贴纸压上去；循环结束贴纸销毁，画面自然恢复。
-        internal void Cover(Point p)
-        {
-            if (canvas == IntPtr.Zero) return;
-            try
-            {
-                if (cover == null) cover = new Sticker();
-                Color bg = SampleCanvas(p, 18);
-                using (Bitmap bmp = new Bitmap(38, 38, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
-                {
-                    using (Graphics g = Graphics.FromImage(bmp)) g.Clear(bg);
-                    bool ok = Paste(cover, bmp, origin.X + p.X - 19, origin.Y + p.Y - 19, 38, 38);
-                    paper = "cover=" + cover.Handle + ",ok=" + ok;
-                }
-            }
-            catch (System.Exception ex) { paper = "coverERR:" + ex.Message; }
-        }
-
-        Color SampleCanvas(Point p, int r)
-        {
-            var tally = new Dictionary<int, int>();
-            IntPtr dc = GetDC(canvas);
-            try
-            {
-                for (int i = 0; i < 12; i++)
-                {
-                    double a = i * Math.PI / 6;
-                    int c = (int)(GetPixel(dc, p.X + (int)Math.Round(Math.Cos(a)*r), p.Y + (int)Math.Round(Math.Sin(a)*r)) & 0x00FFFFFF);
-                    tally[c] = (tally.ContainsKey(c) ? tally[c] : 0) + 1;
-                }
-            }
-            finally { ReleaseDC(canvas, dc); }
-            int best = 0, bestN = -1;
-            foreach (var kv in tally) if (kv.Value > bestN) { bestN = kv.Value; best = kv.Key; }
-            return Color.FromArgb((best >> 16) & 0xFF, (best >> 8) & 0xFF, best & 0xFF);
-        }
-
         // 把一块位图贴到置顶透明窗口上（每像素 alpha，只有画上去的像素不透明，其余点击穿透）。
-        bool Paste(Sticker target, Bitmap bmp, int sx, int sy, int w, int h)
+        // 笔画（InkPreview）也用它，所以是 internal static。
+        internal static bool Paste(Sticker target, Bitmap bmp, int sx, int sy, int w, int h)
         {
             target.Show(false);
             IntPtr screenDc = IntPtr.Zero, memDc = IntPtr.Zero, hbitmap = IntPtr.Zero;
@@ -306,8 +268,8 @@ public class ZWKitMouse
 
         // 只用来当「贴纸」的窗口：裸 Win32 弹窗（借系统 STATIC 类），不用 WinForms——
         // 在 CAD 里 new Form() + Show() 会把整个 LISP 卡死（真机实测），裸窗口没这个毛病。
-        // 置顶 + 分层 + 鼠标穿透 + 不抢焦点。
-        sealed class Sticker : IDisposable
+        // 置顶 + 分层 + 鼠标穿透 + 不抢焦点。悬停高亮与拖动笔画共用。
+        internal sealed class Sticker : IDisposable
         {
             IntPtr hwnd;
             internal IntPtr Handle { get { return hwnd; } }
@@ -425,11 +387,6 @@ public class ZWKitMouse
                 try { sticker.Dispose(); } catch { }
                 sticker = null;
             }
-            if (cover != null)
-            {
-                try { cover.Dispose(); } catch { }
-                cover = null;
-            }
         }
     }
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L,T,R,B; }
@@ -450,7 +407,6 @@ public class ZWKitMouse
     [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
     [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
     [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
-    [DllImport("gdi32.dll")] static extern uint GetPixel(IntPtr dc, int x, int y);
     [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr h, IntPtr dstDc, ref POINT dst, ref SIZE size, IntPtr srcDc, ref POINT src, int key, ref BLENDFUNCTION blend, int flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
@@ -559,6 +515,248 @@ public class ZWKitMouse
         }
     }
 
+    // ===== TR / EX 交互层（LISP 侧用 grread 跟踪模式驱动）=====
+    // 2026-09-21 在 ZWCAD 2020 上真机抓取：grread 跟踪模式下 CAD 自己的准星会跟着鼠标走，
+    // 事件只有 (5 移动)/(3 左键按下)/(25 右键)/(2 键盘)，坐标就是 UCS 点；左键「松开」不产生
+    // 任何事件（只能靠 GetAsyncKeyState 查）。所以输入循环交给 LISP 的 grread，这里只帮忙做三件事：
+    //   1) 查按键状态（Shift / 左键）与鼠标当前位置；
+    //   2) 画悬停高亮（复刻 AutoCAD 的「压到哪条线，哪条线亮起来」）；
+    //   3) 画拖动时的笔画（青色；按住 Shift 是橙红色）。
+    static HoverPreview hover;
+    static InkPreview ink;
+
+    static string N(double v) { return v.ToString("0.######", CultureInfo.InvariantCulture); }
+
+    static bool ScreenSize(out int w, out int h)
+    {
+        w = h = 0;
+        try
+        {
+            var sz = (ZwSoft.ZwCAD.Geometry.Point2d)CadApp.GetSystemVariable("SCREENSIZE");
+            w = (int)sz.X; h = (int)sz.Y;
+        }
+        catch { return false; }
+        return w >= 20 && h >= 20;
+    }
+
+    // 鼠标当前在绘图区里的比例坐标（0,0 = 左下角），与 LISP 的 ze:view / ze:wpts 一套。
+    static bool CursorFrac(IntPtr canvas, int width, int height, out double fx, out double fy)
+    {
+        fx = fy = 0.0;
+        Point origin = new Point(0, 0);
+        if (canvas == IntPtr.Zero || !ClientToScreen(canvas, ref origin)) return false;
+        Point p = Cursor.Position;
+        int x = p.X-origin.X, y = p.Y-origin.Y;
+        fx = (double)x/width;
+        fy = 1.0-(double)y/height;
+        return x >= 0 && y >= 0 && x < width && y < height;
+    }
+
+    static bool Frac(TypedValue[] a, out double fx, out double fy)
+    {
+        fx = fy = 0.0;
+        if (a == null || a.Length < 2) return false;
+        try { fx = Convert.ToDouble(a[0].Value); fy = Convert.ToDouble(a[1].Value); }
+        catch { return false; }
+        return true;
+    }
+
+    // 拖动修剪 / 拖动延伸时的笔画。画在独立的置顶透明窗上：CAD 的画布是 GPU 合成的，
+    // 直接往画布 DC 上画会被它自己的重绘冲掉（1.2.34/1.2.35 真机实测），透明窗才稳。
+    // 做法与悬停高亮一样，只是内容换成整条折线，并且每次只重画笔画的外接矩形。
+    sealed class InkPreview : IDisposable
+    {
+        const int PenWidth = 2;
+        static readonly Color Cyan = Color.FromArgb(0, 232, 255);
+        static readonly Color Orange = Color.FromArgb(255, 96, 64);
+        readonly HoverPreview.Sticker sticker = new HoverPreview.Sticker();
+        readonly List<PointF> pts = new List<PointF>();
+        IntPtr canvas = IntPtr.Zero;
+        Point origin = Point.Empty;
+        bool orange;
+        DateTime stamp = DateTime.MinValue;
+        internal bool Empty { get { return pts.Count == 0; } }
+
+        internal void Add(IntPtr h, double fx, double fy, int width, int height, bool red)
+        {
+            if (Empty)
+            {
+                canvas = h;
+                origin = new Point(0, 0);
+                ClientToScreen(h, ref origin);
+            }
+            orange = red;
+            pts.Add(new PointF((float)(fx*width), (float)((1.0-fy)*height)));
+            Render(false);
+        }
+
+        // 节流 35 毫秒：每个鼠标事件都去贴一次大位图吃不消；松开时那一笔会被 End() 直接撤掉，
+        // 所以这里不用补最后一帧。
+        void Render(bool force)
+        {
+            if (canvas == IntPtr.Zero || pts.Count == 0) return;
+            if (!force && (DateTime.UtcNow-stamp).TotalMilliseconds < 35) return;
+            stamp = DateTime.UtcNow;
+            try
+            {
+                int pad = PenWidth+1;
+                float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, b = float.MinValue;
+                foreach (PointF q in pts)
+                {
+                    if (q.X < l) l = q.X; if (q.X > r) r = q.X;
+                    if (q.Y < t) t = q.Y; if (q.Y > b) b = q.Y;
+                }
+                int x0 = (int)Math.Floor(l)-pad, y0 = (int)Math.Floor(t)-pad;
+                int w = (int)Math.Ceiling(r)-x0+pad+1, h = (int)Math.Ceiling(b)-y0+pad+1;
+                if (w < 1 || h < 1 || w > 8000 || h > 8000) return;
+                using (Bitmap bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                {
+                    using (Graphics g = Graphics.FromImage(bmp))
+                    {
+                        g.Clear(Color.Transparent);
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                        using (Pen pen = new Pen(orange ? Orange : Cyan, PenWidth))
+                        {
+                            if (pts.Count == 1)
+                            {
+                                g.DrawLine(pen, pts[0].X-x0, pts[0].Y-y0, pts[0].X-x0+0.1f, pts[0].Y-y0);
+                            }
+                            else
+                            {
+                                var q = new PointF[pts.Count];
+                                for (int i = 0; i < pts.Count; i++) q[i] = new PointF(pts[i].X-x0, pts[i].Y-y0);
+                                g.DrawLines(pen, q);
+                            }
+                        }
+                    }
+                    HoverPreview.Paste(sticker, bmp, origin.X+x0, origin.Y+y0, w, h);
+                }
+            }
+            catch { }
+        }
+
+        internal void End() { pts.Clear(); try { sticker.Show(false); } catch { } }
+        public void Dispose() { try { sticker.Dispose(); } catch { } }
+    }
+
+    // (ZWK_HOVER_101 fx fy) —— fx/fy 是 0~1 的绘图区比例坐标（0,0 = 左下角，与 ze:frac 一致）。
+    // 返回 "OK;<命中对象数>" / "OFF" / "NOCANVAS" / "NOSCREEN" / "ERR:..."。
+    [LispFunction("ZWK_HOVER_101")]
+    public static ResultBuffer HoverCheck2(ResultBuffer args)
+    {
+        try
+        {
+            TypedValue[] a = args == null ? new TypedValue[0] : args.AsArray();
+            double fx, fy;
+            if (!Frac(a, out fx, out fy)) return Status("ERROR");
+            int w, h;
+            if (!ScreenSize(out w, out h)) return Status("NOSCREEN");
+            IntPtr canvas = FindCanvas(w, h);
+            if (canvas == IntPtr.Zero) return Status("NOCANVAS");
+            bool inside = fx >= 0.0 && fx <= 1.0 && fy >= 0.0 && fy <= 1.0;
+            if (hover == null) hover = new HoverPreview();
+            hover.Attach(canvas);
+            hover.Update(new Point((int)Math.Round(fx*w), (int)Math.Round((1.0-fy)*h)), w, h, inside);
+            return Status(inside ? "OK;" + hover.Hits : "OFF");
+        }
+        catch (System.Exception ex) { return Status("ERR:" + ex.Message); }
+    }
+
+    [LispFunction("ZWK_HOVER_END_101")]
+    public static ResultBuffer HoverOff(ResultBuffer args)
+    {
+        try { if (hover != null) hover.Clear(); } catch { }
+        return Status("OK");
+    }
+
+    // (ZWK_STATE_101) —— "1;fx;fy" = 左键按着 / "0;fx;fy" = 松着；"OUT" 鼠标不在绘图区。
+    [LispFunction("ZWK_STATE_101")]
+    public static ResultBuffer MouseState(ResultBuffer args)
+    {
+        try
+        {
+            int w, h;
+            if (!ScreenSize(out w, out h)) return Status("NOSCREEN");
+            double fx, fy;
+            if (!CursorFrac(FindCanvas(w, h), w, h, out fx, out fy)) return Status("OUT");
+            return Status((Down(1) ? "1;" : "0;") + N(fx) + ";" + N(fy));
+        }
+        catch (System.Exception ex) { return Status("ERR:" + ex.Message); }
+    }
+
+    // (ZWK_SHIFT_101) —— "1" 按着 Shift。
+    [LispFunction("ZWK_SHIFT_101")]
+    public static ResultBuffer ShiftState(ResultBuffer args) { return Status(Down(16) ? "1" : "0"); }
+
+    // (ZWK_PRESS_101 fx fy [超时毫秒]) —— 左键按下之后的判定（fx/fy 是按下时的比例坐标）。
+    //   "UP;fx;fy"    松开了（fx/fy = 松开的位置）
+    //   "MOVED;fx;fy" 还按着，但已经动了 3.5 像素以上（＝拖动的开始）
+    //   "HOLD;fx;fy"  超时了还按着、几乎没动
+    //   "OUT"         跑出了绘图区
+    // 阻塞时间是毫秒级（6 毫秒一查），只有「用户没动」时才可能等满整个超时；
+    // 一旦动起来或者松手就立刻返回，准星几乎不会僵住。
+    [LispFunction("ZWK_PRESS_101")]
+    public static ResultBuffer PressWait(ResultBuffer args)
+    {
+        try
+        {
+            TypedValue[] a = args == null ? new TypedValue[0] : args.AsArray();
+            double fx, fy;
+            if (!Frac(a, out fx, out fy)) return Status("ERROR");
+            int w, h;
+            if (!ScreenSize(out w, out h)) return Status("NOSCREEN");
+            IntPtr canvas = FindCanvas(w, h);
+            if (canvas == IntPtr.Zero) return Status("NOCANVAS");
+            int timeout = a.Length > 2 ? Convert.ToInt32(a[2].Value) : 220;
+            if (timeout < 0) timeout = 0;
+            Point origin = new Point(0, 0);
+            ClientToScreen(canvas, ref origin);
+            double px = origin.X + fx*w, py = origin.Y + (1.0-fy)*h;
+            DateTime until = DateTime.UtcNow.AddMilliseconds(timeout);
+            while (true)
+            {
+                Point now = Cursor.Position;
+                double dx = now.X-px, dy = now.Y-py;
+                double cx, cy;
+                bool inside = CursorFrac(canvas, w, h, out cx, out cy);
+                if (Math.Sqrt(dx*dx+dy*dy) > 3.5)
+                    return Status((inside ? "MOVED;" : "OUT;") + N(cx) + ";" + N(cy));
+                if (!Down(1)) return Status("UP;" + N(cx) + ";" + N(cy));
+                if (DateTime.UtcNow >= until) return Status("HOLD;" + N(cx) + ";" + N(cy));
+                Thread.Sleep(6);
+            }
+        }
+        catch (System.Exception ex) { return Status("ERR:" + ex.Message); }
+    }
+
+    // (ZWK_INK_101 fx fy red) —— 记一个笔画点并重画整条笔画；red = 1 画橘红色（按住 Shift 的延伸）。
+    [LispFunction("ZWK_INK_101")]
+    public static ResultBuffer InkAdd(ResultBuffer args)
+    {
+        try
+        {
+            TypedValue[] a = args == null ? new TypedValue[0] : args.AsArray();
+            double fx, fy;
+            if (!Frac(a, out fx, out fy)) return Status("ERROR");
+            bool red = a.Length > 2 && Convert.ToInt32(a[2].Value) != 0;
+            int w, h;
+            if (!ScreenSize(out w, out h)) return Status("NOSCREEN");
+            IntPtr canvas = FindCanvas(w, h);
+            if (canvas == IntPtr.Zero) return Status("NOCANVAS");
+            if (ink == null) ink = new InkPreview();
+            ink.Add(canvas, fx, fy, w, h, red);
+            return Status("OK");
+        }
+        catch (System.Exception ex) { return Status("ERR:" + ex.Message); }
+    }
+
+    [LispFunction("ZWK_INK_END_101")]
+    public static ResultBuffer InkEnd(ResultBuffer args)
+    {
+        try { if (ink != null) ink.End(); } catch { }
+        return Status("OK");
+    }
+
     [LispFunction("ZWK_NAVCHECK_101")]
     public static ResultBuffer NavCheck(ResultBuffer args)
     {
@@ -635,8 +833,10 @@ public class ZWKitMouse
         return Status("HOVER_HITS=" + n + ";BOX=" + box + ";PAPER=" + paper);
     }
 
+    // 自检：新版（grread 交互层）返回 "READY2"；1.2.35 及以前返回 "READY"。
+    // trimext.lsp 的 ze:ready 靠它判断 bin 里的 DLL 是不是配套的这一版。
     [LispFunction("ZWK_MODULE_101")]
-    public static ResultBuffer ModuleCheck(ResultBuffer args) { return Status("READY"); }
+    public static ResultBuffer ModuleCheck(ResultBuffer args) { return Status("READY2"); }
 
     [LispFunction("ZWK_CAPTURE_101")]
     public static ResultBuffer Capture(ResultBuffer args)
@@ -678,16 +878,7 @@ public class ZWKitMouse
                 CadApp.DocumentManager.MdiActiveDocument.Editor.WriteMessage("\n未找到独立绘图区，已停止以避免准星残留。请使用模型空间单视口。");
                 return Status("ERROR");
             }
-            if (hover != null)
-            {
-                hover.Attach(nativeCanvas);
-                // CAD 的准星会冻在「命令启动那一刻」的位置，盖上它，免得和自绘光标同时出现。
-                Point c0 = new Point(0, 0);
-                ClientToScreen(nativeCanvas, ref c0);
-                Point mp = Cursor.Position;
-                mp = new Point(mp.X - c0.X, mp.Y - c0.Y);
-                if (mp.X > 0 && mp.Y > 0 && mp.X < width && mp.Y < height) hover.Cover(mp);
-            }
+            if (hover != null) hover.Attach(nativeCanvas);
             ClearNativeCrosshair(nativeCanvas);
             precision = new PrecisionCursor();
             while (true)

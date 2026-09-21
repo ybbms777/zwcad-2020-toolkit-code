@@ -173,12 +173,17 @@ public class ZWKitMouse
                 using (var view = ed.GetCurrentView())
                 {
                     double vh = view.Height, vw = vh*width/height;
-                    double cx = view.CenterPoint.X + ((double)p.X/width-0.5)*vw;
-                    double cy = view.CenterPoint.Y + (0.5-(double)p.Y/height)*vh;
                     double d = 2.0*vh/height;   // 与 ze:box 的「2 像素半格」一致
                     var t = ZwSoft.ZwCAD.Geometry.Matrix3d.PlaneToWorld(view.ViewDirection);
                     t = ZwSoft.ZwCAD.Geometry.Matrix3d.Displacement(view.Target-ZwSoft.ZwCAD.Geometry.Point3d.Origin)*t;
                     t = ZwSoft.ZwCAD.Geometry.Matrix3d.Rotation(-view.ViewTwist,view.ViewDirection,view.Target)*t;
+                    // view.CenterPoint 在 ZWCAD 2020 里给的就是 WCS 下的视图中心（真机实测：
+                    // 4483.6647 = VIEWCTR 1657.0552 + UCSORG 2826.6095，Target=(0,0,0)），
+                    // 配合 t 算出来的就是光标的世界坐标，这一段没问题。
+                    // 悬停查不到东西的原因在选择集调用：ZWCAD 的 SelectCrossingWindow 收 UCS 点，
+                    // 见 CrossWindow 的注释。
+                    double cx = view.CenterPoint.X + ((double)p.X/width-0.5)*vw;
+                    double cy = view.CenterPoint.Y + (0.5-(double)p.Y/height)*vh;
                     a = new ZwSoft.ZwCAD.Geometry.Point3d(cx-d,cy-d,0).TransformBy(t);
                     b = new ZwSoft.ZwCAD.Geometry.Point3d(cx+d,cy+d,0).TransformBy(t);
                     // 光标本身的世界坐标（就是那个小窗的中心），用来判断现下会剪掉哪一段
@@ -190,7 +195,7 @@ public class ZWKitMouse
             var ids = new List<ObjectId>();
             try
             {
-                PromptSelectionResult r = ed.SelectCrossingWindow(a,b);
+                PromptSelectionResult r = CrossWindow(ed, a, b);
                 if (r != null && r.Status == PromptStatus.OK && r.Value != null)
                     try { ids.AddRange(r.Value.GetObjectIds()); } finally { r.Value.Dispose(); }
             }
@@ -277,7 +282,7 @@ public class ZWKitMouse
             PromptSelectionResult r;
             try
             {
-                r = doc.Editor.SelectCrossingWindow(
+                r = CrossWindow(doc.Editor,
                     new ZwSoft.ZwCAD.Geometry.Point3d(p0.X-m, p0.Y-m, p0.Z),
                     new ZwSoft.ZwCAD.Geometry.Point3d(p1.X+m, p1.Y+m, p1.Z));
             }
@@ -639,6 +644,46 @@ public class ZWKitMouse
         return w >= 20 && h >= 20;
     }
 
+    // UCS→WCS 矩阵，用来把 WCS 点换算成 ZWCAD 选择集接口要的 UCS 点。
+    // ZWCAD 2020 的 UCSXDIR / UCSYDIR 返回的是 Point3d（AutoCAD 是 Vector3d，实测如此）。
+    static bool TryWcsToUcs(out ZwSoft.ZwCAD.Geometry.Matrix3d w2u)
+    {
+        w2u = ZwSoft.ZwCAD.Geometry.Matrix3d.Identity;
+        try
+        {
+            var org = (ZwSoft.ZwCAD.Geometry.Point3d)CadApp.GetSystemVariable("UCSORG");
+            var px = (ZwSoft.ZwCAD.Geometry.Point3d)CadApp.GetSystemVariable("UCSXDIR");
+            var py = (ZwSoft.ZwCAD.Geometry.Point3d)CadApp.GetSystemVariable("UCSYDIR");
+            var xd = new ZwSoft.ZwCAD.Geometry.Vector3d(px.X, px.Y, px.Z);
+            var yd = new ZwSoft.ZwCAD.Geometry.Vector3d(py.X, py.Y, py.Z);
+            var u2w = ZwSoft.ZwCAD.Geometry.Matrix3d.AlignCoordinateSystem(
+                ZwSoft.ZwCAD.Geometry.Point3d.Origin,
+                ZwSoft.ZwCAD.Geometry.Vector3d.XAxis,
+                ZwSoft.ZwCAD.Geometry.Vector3d.YAxis,
+                ZwSoft.ZwCAD.Geometry.Vector3d.ZAxis,
+                org, xd, yd, xd.CrossProduct(yd));
+            w2u = u2w.Inverse();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    // 选择集调用：ZWCAD 2020 的 Editor.SelectCrossingWindow 收的是 **UCS** 点，不是 AutoCAD
+    // 文档里写的 WCS（2026-09-21 真机实测：UCSORG=(2826.6,254.2) 的图纸里传 WCS 点拿到的是
+    // PromptStatus.Error、一个对象都选不到；传 UCS 点立刻 OK。当时的合成测试图纸 UCS=WCS，
+    // 所以侥幸通过，真实图纸里就表现为「悬停压到线上不变色」）。
+    // 这里统一换成 UCS 再调；换算失败（拿不到 UCS 变量）就退回原样，保持旧行为。
+    static PromptSelectionResult CrossWindow(Editor ed, ZwSoft.ZwCAD.Geometry.Point3d a, ZwSoft.ZwCAD.Geometry.Point3d b)
+    {
+        ZwSoft.ZwCAD.Geometry.Matrix3d w2u;
+        if (TryWcsToUcs(out w2u))
+        {
+            try { return ed.SelectCrossingWindow(a.TransformBy(w2u), b.TransformBy(w2u)); }
+            catch { }
+        }
+        return ed.SelectCrossingWindow(a, b);
+    }
+
     // 鼠标当前在绘图区里的比例坐标（0,0 = 左下角），与 LISP 的 ze:view / ze:wpts 一套。
     static bool CursorFrac(IntPtr canvas, int width, int height, out double fx, out double fy)
     {
@@ -950,6 +995,35 @@ public class ZWKitMouse
             while (DateTime.UtcNow < until) { Application.DoEvents(); Thread.Sleep(10); }
         }
         return Status("HOVER_HITS=" + n + ";BOX=" + box + ";PAPER=" + paper);
+    }
+
+    // 自检：把悬停坐标换算用到的几个量原样吐出来（VIEWCTR / UCSORG / view.CenterPoint /
+    // Target 等），用来定位「UCS 原点不在 (0,0) 的图纸里悬停不亮」这类问题。
+    // 返回 "key=value;key=value;..."，不参与 TR / EX 的正常流程。
+    [LispFunction("ZWK_VIEW_101")]
+    public static ResultBuffer ViewDiag(ResultBuffer args)
+    {
+        try
+        {
+            var ed = CadApp.DocumentManager.MdiActiveDocument.Editor;
+            var sb = new System.Text.StringBuilder();
+            object vc = CadApp.GetSystemVariable("VIEWCTR");
+            object uo = CadApp.GetSystemVariable("UCSORG");
+            sb.Append("VIEWCTR=" + Convert.ToString(vc) + "[" + (vc == null ? "null" : vc.GetType().Name) + "]");
+            sb.Append(";UCSORG=" + Convert.ToString(uo) + "[" + (uo == null ? "null" : uo.GetType().Name) + "]");
+            int w, h;
+            sb.Append(ScreenSize(out w, out h) ? ";SCREENSIZE=" + w + "x" + h : ";SCREENSIZE=none");
+            ZwSoft.ZwCAD.Geometry.Matrix3d w2u;
+            sb.Append(";WcsToUcs=" + TryWcsToUcs(out w2u));
+            using (var view = ed.GetCurrentView())
+            {
+                sb.Append(";CenterPoint=" + N(view.CenterPoint.X) + "," + N(view.CenterPoint.Y));
+                sb.Append(";Target=" + N(view.Target.X) + "," + N(view.Target.Y) + "," + N(view.Target.Z));
+                sb.Append(";Height=" + N(view.Height) + ";Width=" + N(view.Width) + ";Twist=" + N(view.ViewTwist));
+            }
+            return Status(sb.ToString());
+        }
+        catch (System.Exception ex) { return Status("ERR:" + ex.Message); }
     }
 
     // 自检：新版（grread 交互层）返回 "READY2"；1.2.35 及以前返回 "READY"。

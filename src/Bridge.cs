@@ -1,11 +1,15 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 using System.Globalization;
 using ZwSoft.ZwCAD.Runtime;
 using ZwSoft.ZwCAD.DatabaseServices;
 using A = ZwSoft.ZwCAD.ApplicationServices.Application;
+// ZWCAD 2020 只会扫描 CommandClass 里点名的类。Mouse.cs 里的 ZWK_*_101 是 LispFunction，
+// 不把 ZWKitMouse 列进来它们就不会注册（LISP 调用会报「undefined function」），
+// 而没写 CommandClass 的小测试 DLL 反而正常 —— 2026-09-21 在真机上就是这么试出来的。
 [assembly: CommandClass(typeof(ZWKitBridge102))]
+[assembly: CommandClass(typeof(ZWKitMouse))]
 public class ZWKitBridge102 {
     static string FileName { get { return Path.Combine(Path.GetTempPath(), "zwkit-bridge-102.txt"); } }
     static void Write(string value) { File.WriteAllText(FileName, value, Encoding.ASCII); }

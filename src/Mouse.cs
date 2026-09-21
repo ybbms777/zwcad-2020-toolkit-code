@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -148,7 +148,10 @@ public class ZWKitMouse
     }
     sealed class InputFilter : IMessageFilter
     {
-        public bool Cancel, Undo;
+        public bool Cancel, Undo, AllowKeys;
+        // 0 = 没有按键；否则是 VK 码。只有 AllowKeys 打开时才会被赋值，
+        // 这样 ZWKCAP102 的既有行为与以前完全一致。
+        public int Key;
         public int Wheel;
         public bool PreFilterMessage(ref Message m)
         {
@@ -157,7 +160,8 @@ public class ZWKitMouse
             {
                 int k = m.WParam.ToInt32();
                 if (k == 27 || k == 13 || k == 32) Cancel = true;
-                if (k == 85) Undo = true;
+                else if (k == 85 && !AllowKeys) Undo = true;
+                else if (AllowKeys && Key == 0 && ((k >= 48 && k <= 57) || (k >= 65 && k <= 90))) Key = k;
             }
             return (m.Msg >= 0x200 && m.Msg <= 0x20E) ||
                    (m.Msg >= 0x100 && m.Msg <= 0x109);
@@ -252,12 +256,21 @@ public class ZWKitMouse
 
     [LispFunction("ZWK_CAPTURE_101")]
     public static ResultBuffer Capture(ResultBuffer args)
+    { return CaptureCore(args, false); }
+
+    // 给 TR/EX 交互层用：除了笔画，还把用户按下的字母/数字键回传成 ("KEY" "C")。
+    // 单独一个入口，保证 ZWKCAP102 的既有行为一个字节都不变。
+    public static ResultBuffer CaptureKeys(ResultBuffer args)
+    { return CaptureCore(args, true); }
+
+    static ResultBuffer CaptureCore(ResultBuffer args, bool allowKeys)
     {
         TypedValue[] a = args == null ? new TypedValue[0] : args.AsArray();
         if (a.Length != 2) return Status("ERROR");
         int width = Convert.ToInt32(a[0].Value), height = Convert.ToInt32(a[1].Value);
         if (width < 20 || height < 20) return Status("ERROR");
         var filter = new InputFilter();
+        filter.AllowKeys = allowKeys;
         IntPtr canvas = IntPtr.Zero;
         Graphics graphics = null;
         Pen pen = null;
@@ -286,6 +299,14 @@ public class ZWKitMouse
                 precision.Refresh();
                 if (filter.Cancel || Down(27) || Down(2)) return Status("CANCEL");
                 if (filter.Undo) return Status(drawing ? "CANCEL" : "UNDO");
+                // 只有空闲状态（没在画笔画）才把按键交还给 Lisp；画到一半按键不算选项。
+                if (allowKeys && !drawing && filter.Key != 0)
+                {
+                    int k = filter.Key; filter.Key = 0;
+                    return new ResultBuffer(new TypedValue[] {
+                        new TypedValue((int)LispDataType.Text, "KEY"),
+                        new TypedValue((int)LispDataType.Text, ((char)k).ToString()) });
+                }
                 if (!OurWindow(GetForegroundWindow())) return Status("CANCEL");
                 if ((DateTime.UtcNow - started).TotalMinutes > 10) return Status("CANCEL");
                 bool held = Down(1);

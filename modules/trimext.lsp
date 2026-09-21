@@ -97,17 +97,33 @@
   (setq sz (getvar "SCREENSIZE"))
   (if (and sz (> (cadr sz) 0)) (/ (getvar "VIEWSIZE") (cadr sz)) 0.0))
 
-;; 拾取点周围 2 像素的小交叉框，只用来「判断这个点上有没有对象」。
+;; 拾取光圈 = CAD 自己的「拾取框」（PICKBOX，单位像素）。屏幕上那个小方块就是它，
+;; 看到多大、判定就是多大。2026-09-21 用户反馈：原来写死 ±2 像素，准星压到线上
+;; 半天不亮，触发面积太小（和 CURSORSIZE 无关，把十字调大也没用）。
+(defun ze:pick (/ n)
+  (setq n (vl-catch-all-apply 'getvar (list "PICKBOX")))
+  (if (and (numberp n) (>= n 3) (<= n 60)) n 8))
+
+;; 标注类对象（文字 / 尺寸 / 引线 / 公差 / 填充 / 表格）不参与 TR / EX：
+;; 它们没有「会被剪掉的那一段」，悬停时画外框只会变成盖住半张图的大方框
+;; （2026-09-21 用户反馈「不应该受到标注线影响」）；光圈变大后它们还会被
+;; 算成修剪边界、被「删除修剪不到的」误删，所以统一在这里排除。
+(defun ze:skip ()
+  '((-4 . "<NOT")
+    (0 . "TEXT,MTEXT,ATTDEF,ATTRIB,DIMENSION,LEADER,MULTILEADER,TOLERANCE,HATCH,TABLE")
+    (-4 . "NOT>")))
+
+;; 拾取点周围一个光圈大小的框，只用来「判断这个点上有没有对象」。
 ;; 单个选择本身已经改用裸点喂原生命令 —— 真机实测（T3）ZWCAD 并没有把裸点
 ;; 当成矩形框选（CMDACTIVE=0，剪掉的那一段也对），比小窗交更贴近 AutoCAD 的
 ;; 「拾取点决定剪哪一端」。
 (defun ze:box (p / d)
-  (setq d (* 2.0 (ze:pend)))
+  (setq d (* (/ (ze:pick) 2.0) (ze:pend)))
   (list (list (- (car p) d) (- (cadr p) d) (caddr p))
         (list (+ (car p) d) (+ (cadr p) d) (caddr p))))
 
 (defun ze:hit (p / b ss)
-  (setq b (ze:box p) ss (ssget "_C" (car b) (cadr b)))
+  (setq b (ze:box p) ss (ssget "_C" (car b) (cadr b) (ze:skip)))
   (ze:dbg (strcat "hit " (vl-princ-to-string p) " -> " (if ss (itoa (sslength ss)) "nil")))
   (vl-catch-all-apply 'sssetfirst (list nil nil))
   ss)
@@ -142,9 +158,11 @@
   out)
 
 ;; 本次选择会碰到哪些对象（给「删掉修剪不到的」用）。
+;; 标注类排除在外 —— 尺寸/文字本来就不参与修剪，进了候选就会被「删除修剪不到的」
+;; 当成没修剪到而误删（光圈放大后特别容易发生）。
 (defun ze:cand (mode plist)
   (cond
-    ((equal mode "_C") (ssget "_C" (car plist) (cadr plist)))
+    ((equal mode "_C") (ssget "_C" (car plist) (cadr plist) (ze:skip)))
     ((equal mode "_F") (ssget "_F" plist '((0 . "LINE,ARC,CIRCLE,LWPOLYLINE,POLYLINE,ELLIPSE,SPLINE"))))
     (T nil)))
 
@@ -437,7 +455,8 @@
 (defun ze:hover (p / r)
   (setq r (zwk:hover (ze:frac p) (if (equal (zwk:shift) "1") 1 0))
         ze:hovst r)
-  (if (and (not ze:hwarn) (or (null r) (/= (substr r 1 2) "OK")))
+  ;; "OFF" 是「光标不在绘图区」的正常回执（比如移到命令行上），不算故障，不报警。
+  (if (and (not ze:hwarn) (or (null r) (and (/= (substr r 1 2) "OK") (/= r "OFF"))))
     (progn (setq ze:hwarn T)
            (princ (strcat "\n悬停高亮不可用（" (if r r "无响应") "）。")))))
 
@@ -534,29 +553,13 @@
        (> (caddr (getvar "VIEWDIR")) 0.0)))
 
 ;; ============================================================ 光标
-;; 进 TR / EX 时把十字光标缩到最小，只剩中间那个小方块（就是 AutoCAD 的样子）。
-;; 注意：CURSORSIZE 是全局设置，退出时必须原样还原，所以挂在 ze:restore 上，
-;; 正常结束和出错（*error*）两条路都会经过它。ZWCAD 若不支持该变量则自动跳过。
-(setq ze:cur nil)
-
-(defun ze:cursor-on (/ v)
-  (setq v (vl-catch-all-apply 'getvar (list "CURSORSIZE")))
-  (if (vl-catch-all-error-p v)
-    nil
-    (progn
-      (setq ze:cur v)
-      (vl-catch-all-apply 'setvar (list "CURSORSIZE" 1)))))
-
-(defun ze:cursor-off ()
-  (if ze:cur
-    (progn
-      (ze:dbg (strcat "cursor-off cur=" (vl-princ-to-string ze:cur) " fix=" (vl-princ-to-string (fix ze:cur))
-                      " r=" (vl-princ-to-string (vl-catch-all-apply 'setvar (list "CURSORSIZE" (fix ze:cur))))
-                      " now=" (vl-princ-to-string (vl-catch-all-apply 'getvar (list "CURSORSIZE")))))
-      (setq ze:cur nil))))
+;; 不再改 CURSORSIZE。ZWCAD 的 CURSORSIZE=1 只是「一小截十字」，不是 AutoCAD 那种
+;; 「小方块」；用户要的是拾取框方块，所以改成由 DLL 在光标处贴一个 PICKBOX 大小的
+;; 方块（ZWK_HOVER_101 里画，见 Mouse.cs 的 PickBox），十字光标保持用户自己的设置。
+;; 2026-09-21 用户反馈：「准星只能十字吗？不能用小正方形准星吗？十字触发面积太小了」
+;; —— 触发面积与 CURSORSIZE 无关（原来写死 ±2 像素），现在光圈就是那个方块。
 
 (defun ze:restore (echo snap)
-  (ze:cursor-off)
   (if echo (setvar "CMDECHO" echo))
   (if snap (setvar "OSMODE" snap))
   (redraw))
@@ -600,7 +603,6 @@
 
 (defun ze:run (isExt / *error* echo snap)
   (setq echo (getvar "CMDECHO") snap (getvar "OSMODE"))
-  (ze:cursor-on)
   (defun *error* (msg)
     (ze:dbg (strcat "ERROR " (vl-princ-to-string msg)))
     (ze:close-mark)

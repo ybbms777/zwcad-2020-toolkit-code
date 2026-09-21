@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -129,6 +129,7 @@ public class ZWKitMouse
         IntPtr canvas = IntPtr.Zero;
         Point origin = Point.Empty;      // 绘图区左上角在屏幕上的位置
         Sticker sticker;
+        Sticker pick;                    // 光标处那个拾取框方块（每帧跟着走）
         Bitmap image;
         string paper = "-";
         internal int Hits { get { return lit.Count; } }
@@ -143,6 +144,7 @@ public class ZWKitMouse
         }
 
         // 撤掉高亮：把贴纸藏起来就行，不用麻烦 CAD 重画。
+        // 注意不含光标方块 —— 高亮换段时会走这里，方块得一直跟着手（Clear 才收方块）。
         void Wipe()
         {
             if (sticker != null) sticker.Show(false);
@@ -151,8 +153,36 @@ public class ZWKitMouse
             lit.Clear();
         }
 
+        // 光标处的拾取框方块（AutoCAD 那个「小方块」的样子）。ZWCAD 在 grread 跟踪模式下
+        // 不画自己的拾取框（2026-09-21 放大截图确认：只有十字），所以自己贴一个。
+        // 每帧都重贴、不参与下面的节流 —— 它就是「触发范围」的可视化，滞后就没意义了。
+        void PickBox(Point p)
+        {
+            if (canvas == IntPtr.Zero) return;
+            try
+            {
+                int side = PickPixels();
+                int w = side + 2;
+                using (Bitmap bmp = new Bitmap(w, w, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                {
+                    using (Graphics g = Graphics.FromImage(bmp))
+                    {
+                        g.Clear(Color.Transparent);
+                        g.DrawRectangle(Pens.White, 0, 0, w-1, w-1);
+                    }
+                    if (pick == null) pick = new Sticker();
+                    Paste(pick, bmp, origin.X+p.X-w/2, origin.Y+p.Y-w/2, w, w, false);
+                }
+            }
+            catch { }
+        }
+
         internal void Clear()
-        { Wipe(); sig = ""; last = new Point(int.MinValue, int.MinValue); stamp = DateTime.MinValue; }
+        {
+            Wipe();
+            if (pick != null) pick.Show(false);
+            sig = ""; last = new Point(int.MinValue, int.MinValue); stamp = DateTime.MinValue;
+        }
 
         // 每帧调用；内部节流（移动 >= 2 像素、距上次 >= 45 毫秒才真的去查），
         // 免得每个 8 毫秒的空转都去问一次选择集。
@@ -160,6 +190,7 @@ public class ZWKitMouse
         internal void Update(Point p, int width, int height, bool inside, bool shift)
         {
             if (!inside) { Clear(); return; }
+            PickBox(p);                                  // 方块每帧跟手，不受下面两道节流限制
             if (Math.Abs(p.X-last.X) < 2 && Math.Abs(p.Y-last.Y) < 2) return;
             if ((DateTime.UtcNow-stamp).TotalMilliseconds < 45) return;
             stamp = DateTime.UtcNow; last = p;
@@ -173,7 +204,7 @@ public class ZWKitMouse
                 using (var view = ed.GetCurrentView())
                 {
                     double vh = view.Height, vw = vh*width/height;
-                    double d = 2.0*vh/height;   // 与 ze:box 的「2 像素半格」一致
+                    double d = 0.5*PickPixels()*vh/height;   // 半格 = 一半拾取框，与 ze:box 一致
                     var t = ZwSoft.ZwCAD.Geometry.Matrix3d.PlaneToWorld(view.ViewDirection);
                     t = ZwSoft.ZwCAD.Geometry.Matrix3d.Displacement(view.Target-ZwSoft.ZwCAD.Geometry.Point3d.Origin)*t;
                     t = ZwSoft.ZwCAD.Geometry.Matrix3d.Rotation(-view.ViewTwist,view.ViewDirection,view.Target)*t;
@@ -201,6 +232,7 @@ public class ZWKitMouse
             }
             catch { ids.Clear(); }   // 查询失败就当作「没压到东西」
             var shapes = new List<PointF[]>();
+            var keep = new List<ObjectId>();
             var sb = new System.Text.StringBuilder();
             using (var tr = doc.Database.TransactionManager.StartTransaction())
                 foreach (ObjectId id in ids)
@@ -208,9 +240,13 @@ public class ZWKitMouse
                     {
                         Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
                         if (ent == null) continue;
+                        // 标注类不参与预览：没有「会被剪掉的那一段」，画外框只会变成
+                        // 盖住半张图的大方框（2026-09-21 用户反馈「这个很明显不对」）。
+                        if (IsAnnotative(ent)) continue;
                         PointF[] poly; string what;
                         if (!shift && Piece(ent, cursor, pj, tr, out poly, out what)) shapes.Add(poly);
                         else { Shape(ent, pj, shapes); what = "*"; }
+                        keep.Add(id);
                         sb.Append(id.ToString()).Append(':').Append(what).Append(';');
                     }
                     catch { }   // 不在图里 / 打不开的对象直接放过
@@ -219,7 +255,7 @@ public class ZWKitMouse
             if (s == sig) return;
             sig = s;
             Wipe();
-            lit.AddRange(ids);
+            lit.AddRange(keep);
             Render(shapes);
         }
 
@@ -247,6 +283,10 @@ public class ZWKitMouse
                 {
                     Entity b = tr.GetObject(bid, OpenMode.ForRead) as Entity;
                     if (b == null) continue;
+                    // 边界只认曲线：标注线 / 尺寸线不算修剪边界。2026-09-21 用户反馈
+                    // 「这个是一整个线，不应该受到标注线影响」——原来压到线上，那一段
+                    // 会被穿过它的绿色尺寸线截断，看着莫名其妙。
+                    if (!(b is Curve)) continue;
                     var pts = new ZwSoft.ZwCAD.Geometry.Point3dCollection();
                     ent.IntersectWith(b, Intersect.OnBothOperands, pts, IntPtr.Zero, IntPtr.Zero);
                     foreach (ZwSoft.ZwCAD.Geometry.Point3d q in pts)
@@ -344,8 +384,13 @@ public class ZWKitMouse
         // 把一块位图贴到置顶透明窗口上（每像素 alpha，只有画上去的像素不透明，其余点击穿透）。
         // 笔画（InkPreview）也用它，所以是 internal static。
         internal static bool Paste(Sticker target, Bitmap bmp, int sx, int sy, int w, int h)
+        { return Paste(target, bmp, sx, sy, w, h, true); }
+
+        // hide = true：先藏后贴再显示（换位置明显时不闪）；false 给「每帧跟手」的拾取框用，
+        // 它只在必要的时候显示一次，之后一直复用同一块面，避免高频 show/hide 抖。
+        internal static bool Paste(Sticker target, Bitmap bmp, int sx, int sy, int w, int h, bool hide)
         {
-            target.Show(false);
+            if (hide) target.Show(false);
             IntPtr screenDc = IntPtr.Zero, memDc = IntPtr.Zero, hbitmap = IntPtr.Zero;
             try
             {
@@ -359,7 +404,7 @@ public class ZWKitMouse
                 blend.BlendOp = 0; blend.BlendFlags = 0; blend.SourceConstantAlpha = 255; blend.AlphaFormat = 1;
                 bool ok = UpdateLayeredWindow(target.Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref blend, 2);
                 SelectObject(memDc, old);
-                target.Show(true);
+                if (hide || !target.On) target.Show(true);
                 return ok;
             }
             catch { return false; }
@@ -487,6 +532,11 @@ public class ZWKitMouse
         public void Dispose()
         {
             Wipe();
+            if (pick != null)
+            {
+                try { pick.Dispose(); } catch { }
+                pick = null;
+            }
             if (sticker != null)
             {
                 try { sticker.Dispose(); } catch { }
@@ -642,6 +692,34 @@ public class ZWKitMouse
         }
         catch { return false; }
         return w >= 20 && h >= 20;
+    }
+
+    // 拾取光圈边长（像素）：直接取 ZWCAD 的 PICKBOX —— 它本来就是「拾取框」的大小，
+    // 也是点选时的判定孔径。悬停判定与 LISP 侧 ze:box 用同一个值，屏幕上再照原样
+    // 贴一个方块（HoverPreview.PickBox），看到多大、触发就是多大。
+    static int PickPixels()
+    {
+        try
+        {
+            int n = Convert.ToInt32(CadApp.GetSystemVariable("PICKBOX"));
+            if (n >= 3 && n <= 60) return n;
+        }
+        catch { }
+        return 8;
+    }
+
+    // 标注类对象（文字 / 尺寸 / 引线 / 公差 / 填充 / 表格）不参与 TR / EX 的悬停预览：
+    // 它们没有「会被剪掉的那一段」，画外框只会变成一个盖住半张图的大方框（2026-09-21
+    // 真机实测：压到尺寸文字上高亮整个文字外框，用户反馈「这个很明显不对」）。
+    // 按 DXF 名判断（ZWCAD 2020 的 API 里没有 Tolerance 实体类，逐类型判会漏）；
+    // LISP 侧 ze:skip 排除了同一批名字（修剪边界与「删除修剪不到的」），两边一致。
+    static readonly HashSet<string> AnnotativeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "TEXT", "MTEXT", "ATTDEF", "ATTRIB", "DIMENSION", "LEADER", "MULTILEADER", "MLEADER",
+        "TOLERANCE", "HATCH", "TABLE" };
+    static bool IsAnnotative(Entity e)
+    {
+        try { return AnnotativeNames.Contains(e.GetRXClass().DxfName); }
+        catch { return false; }
     }
 
     // UCS→WCS 矩阵，用来把 WCS 点换算成 ZWCAD 选择集接口要的 UCS 点。
@@ -1015,6 +1093,7 @@ public class ZWKitMouse
             sb.Append(ScreenSize(out w, out h) ? ";SCREENSIZE=" + w + "x" + h : ";SCREENSIZE=none");
             ZwSoft.ZwCAD.Geometry.Matrix3d w2u;
             sb.Append(";WcsToUcs=" + TryWcsToUcs(out w2u));
+            sb.Append(";PICKBOX=" + PickPixels());
             using (var view = ed.GetCurrentView())
             {
                 sb.Append(";CenterPoint=" + N(view.CenterPoint.X) + "," + N(view.CenterPoint.Y));

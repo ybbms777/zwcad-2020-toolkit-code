@@ -86,7 +86,8 @@
                          ("modules/font.lsp" . "font")
                          ("modules/dimline.lsp" . "dimline")
                          ("modules/frame.lsp" . "frame")
-                         ("modules/tkblock.lsp" . "tke")))
+                         ("modules/tkblock.lsp" . "tke")
+                         ("modules/trimext.lsp" . nil)))
     (foreach zwk:m zwk:modules
       (setq zwk:key (cdr (assoc zwk:m zwk:modkeys)))
       (if (or (null zwk:key) (member zwk:key zwk:loadset))

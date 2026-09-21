@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using ZwSoft.ZwCAD.DatabaseServices;
+using ZwSoft.ZwCAD.EditorInput;
 using ZwSoft.ZwCAD.Runtime;
 using CadApp = ZwSoft.ZwCAD.ApplicationServices.Application;
 
@@ -96,6 +97,300 @@ public class ZWKitMouse
             if (handle != IntPtr.Zero) { DestroyCursor(handle); handle = IntPtr.Zero; }
         }
     }
+    // ===== 悬停高亮 =====
+    // 复刻 AutoCAD：准星压到要修剪的对象上时，那个对象自己亮起来，用户才知道「确实选中了它」。
+    // 只有 TR / EX 的交互层（ZWKCAP103）会用到；拖动修剪 / 拖动延伸（ZWKCAP102）一个字节都不变。
+    //
+    // 为什么这么绕：2026-09-21 在真机（ZWCAD 2020）上逐一带抓屏验过——
+    // Entity.Highlight() / Highlight()+Regen / SetImpliedSelection / (redraw e 3)
+    // 前后一个像素都不变；往绘图区窗口 DC 上画（连拖动笔画的那些线也一样）进程内
+    // 抓得到、屏幕上根本看不见。所以这里自己算实体的屏幕折线，画在一个自己创建的
+    // 置顶透明「贴纸」窗口上：CAD 的画布是 GPU 合成的，只有独立窗口才盖得住。
+    sealed class HoverPreview : IDisposable
+    {
+        const int PenWidth = 3;
+        static readonly Color Highlight = Color.FromArgb(0, 232, 255);
+        readonly List<ObjectId> lit = new List<ObjectId>();
+        Rectangle dirty = Rectangle.Empty;
+        Point last = new Point(int.MinValue, int.MinValue);
+        DateTime stamp = DateTime.MinValue;
+        IntPtr canvas = IntPtr.Zero;
+        Point origin = Point.Empty;      // 绘图区左上角在屏幕上的位置
+        Sticker sticker;
+        Bitmap image;
+        string paper = "-";
+        internal int Hits { get { return lit.Count; } }
+        internal string Paper { get { return paper; } }
+        internal string Bounds { get { return dirty.Width > 0 ? dirty.Left+","+dirty.Top+","+dirty.Right+","+dirty.Bottom : "-"; } }
+
+        internal void Attach(IntPtr h)
+        {
+            canvas = h;
+            Point p = new Point(0, 0);
+            if (h != IntPtr.Zero && ClientToScreen(h, ref p)) origin = p;
+        }
+
+        // 撤掉高亮：把贴纸藏起来就行，不用麻烦 CAD 重画。
+        void Wipe()
+        {
+            if (sticker != null) sticker.Show(false);
+            if (image != null) { image.Dispose(); image = null; }
+            dirty = Rectangle.Empty;
+            lit.Clear();
+        }
+
+        internal void Clear()
+        { Wipe(); last = new Point(int.MinValue, int.MinValue); stamp = DateTime.MinValue; }
+
+        // 每帧调用；内部节流（移动 >= 2 像素、距上次 >= 45 毫秒才真的去查），
+        // 免得每个 8 毫秒的空转都去问一次选择集。
+        internal void Update(Point p, int width, int height, bool inside)
+        {
+            if (!inside) { Clear(); return; }
+            if (Math.Abs(p.X-last.X) < 2 && Math.Abs(p.Y-last.Y) < 2) return;
+            if ((DateTime.UtcNow-stamp).TotalMilliseconds < 45) return;
+            stamp = DateTime.UtcNow; last = p;
+            var doc = CadApp.DocumentManager.MdiActiveDocument;
+            if (doc == null || width < 1 || height < 1) return;
+            var ed = doc.Editor;
+            ZwSoft.ZwCAD.Geometry.Point3d a, b;
+            Projector pj;
+            try
+            {
+                using (var view = ed.GetCurrentView())
+                {
+                    double vh = view.Height, vw = vh*width/height;
+                    double cx = view.CenterPoint.X + ((double)p.X/width-0.5)*vw;
+                    double cy = view.CenterPoint.Y + (0.5-(double)p.Y/height)*vh;
+                    double d = 2.0*vh/height;   // 与 ze:box 的「2 像素半格」一致
+                    var t = ZwSoft.ZwCAD.Geometry.Matrix3d.PlaneToWorld(view.ViewDirection);
+                    t = ZwSoft.ZwCAD.Geometry.Matrix3d.Displacement(view.Target-ZwSoft.ZwCAD.Geometry.Point3d.Origin)*t;
+                    t = ZwSoft.ZwCAD.Geometry.Matrix3d.Rotation(-view.ViewTwist,view.ViewDirection,view.Target)*t;
+                    a = new ZwSoft.ZwCAD.Geometry.Point3d(cx-d,cy-d,0).TransformBy(t);
+                    b = new ZwSoft.ZwCAD.Geometry.Point3d(cx+d,cy+d,0).TransformBy(t);
+                    pj = new Projector(t.Inverse(), view.CenterPoint, vw, vh, width, height);
+                }
+            }
+            catch { return; }
+            var ids = new List<ObjectId>();
+            try
+            {
+                PromptSelectionResult r = ed.SelectCrossingWindow(a,b);
+                if (r != null && r.Status == PromptStatus.OK && r.Value != null)
+                    try { ids.AddRange(r.Value.GetObjectIds()); } finally { r.Value.Dispose(); }
+            }
+            catch { ids.Clear(); }   // 查询失败就当作「没压到东西」
+            if (Same(ids)) return;   // 还是同一批对象，别动它，免得闪
+            Wipe();
+            Paint(ids, pj);
+        }
+
+        bool Same(List<ObjectId> ids)
+        {
+            if (ids.Count != lit.Count) return false;
+            foreach (ObjectId id in ids) if (!lit.Contains(id)) return false;
+            return true;
+        }
+
+        void Paint(List<ObjectId> ids, Projector pj)
+        {
+            if (canvas == IntPtr.Zero || ids.Count == 0) return;
+            var shapes = new List<PointF[]>();
+            var doc = CadApp.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+                foreach (ObjectId id in ids)
+                    try
+                    {
+                        Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                        if (ent != null) Shape(ent, pj, shapes);
+                    }
+                    catch { }   // 不在图里 / 打不开的对象直接放过
+            if (shapes.Count == 0) return;
+            float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, bt = float.MinValue;
+            foreach (PointF[] s in shapes)
+                foreach (PointF q in s)
+                {
+                    if (q.X < l) l = q.X; if (q.X > r) r = q.X;
+                    if (q.Y < t) t = q.Y; if (q.Y > bt) bt = q.Y;
+                }
+            if (r < l || bt < t) return;
+            int pad = PenWidth+2;
+            int x0 = (int)Math.Floor(l)-pad, y0 = (int)Math.Floor(t)-pad;
+            int w = (int)Math.Ceiling(r)-x0+pad+1, h = (int)Math.Ceiling(bt)-y0+pad+1;
+            if (w < 1 || h < 1 || w > 20000 || h > 20000) return;
+            image = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(image))
+            {
+                g.Clear(Color.Transparent);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (Pen pen = new Pen(Highlight, PenWidth))
+                    foreach (PointF[] s in shapes)
+                    {
+                        if (s.Length < 2) continue;
+                        var q = new PointF[s.Length];
+                        for (int i = 0; i < s.Length; i++) q[i] = new PointF(s[i].X-x0, s[i].Y-y0);
+                        g.DrawLines(pen, q);
+                    }
+            }
+            dirty = Rectangle.FromLTRB(x0, y0, x0+w, y0+h);
+            StickerPaper(origin.X+x0, origin.Y+y0, w, h);
+            lit.AddRange(ids);
+        }
+
+        // 把画好的高亮贴到置顶透明窗口上（每像素 alpha，只有线条本身不透明，其余点击穿透）。
+        void StickerPaper(int sx, int sy, int w, int h)
+        {
+            if (sticker != null) sticker.Show(false);
+            IntPtr screenDc = IntPtr.Zero, memDc = IntPtr.Zero, hbitmap = IntPtr.Zero;
+            try
+            {
+                if (sticker == null) sticker = new Sticker();
+                screenDc = GetDC(IntPtr.Zero);
+                memDc = CreateCompatibleDC(screenDc);
+                hbitmap = image.GetHbitmap(Color.FromArgb(0));
+                IntPtr old = SelectObject(memDc, hbitmap);
+                POINT dst = new POINT(sx, sy), src = new POINT(0, 0);
+                SIZE size = new SIZE(w, h);
+                BLENDFUNCTION blend;
+                blend.BlendOp = 0; blend.BlendFlags = 0; blend.SourceConstantAlpha = 255; blend.AlphaFormat = 1;
+                bool ok = UpdateLayeredWindow(sticker.Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref blend, 2);
+                SelectObject(memDc, old);
+                sticker.Show(true);
+                paper = sticker.Handle + ",ok=" + ok + ",on=" + sticker.On + ",at=" + sticker.Bounds;
+            }
+            catch (System.Exception ex) { paper = "ERR:" + ex.GetType().Name + ":" + ex.Message; }
+            finally
+            {
+                if (hbitmap != IntPtr.Zero) DeleteObject(hbitmap);
+                if (memDc != IntPtr.Zero) DeleteDC(memDc);
+                if (screenDc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, screenDc);
+            }
+        }
+
+        // 只用来当「贴纸」的窗口：裸 Win32 弹窗（借系统 STATIC 类），不用 WinForms——
+        // 在 CAD 里 new Form() + Show() 会把整个 LISP 卡死（真机实测），裸窗口没这个毛病。
+        // 置顶 + 分层 + 鼠标穿透 + 不抢焦点。
+        sealed class Sticker : IDisposable
+        {
+            IntPtr hwnd;
+            internal IntPtr Handle { get { return hwnd; } }
+            internal Sticker()
+            {
+                uint ex = 0x00080000 | 0x00000020 | 0x00000080 | 0x00000008 | 0x08000000;
+                hwnd = CreateWindowEx(ex, "STATIC", "", 0x80000000, -4000, -4000, 1, 1,
+                                      IntPtr.Zero, IntPtr.Zero, GetModuleHandle(null), IntPtr.Zero);
+                if (hwnd == IntPtr.Zero) throw new InvalidOperationException("无法创建高亮贴纸窗口。");
+            }
+            // 显示时要抬到「置顶那一层的最上面」，否则会被别的置顶窗口（比如 CAD 自己的
+            // 对话窗口）压住看不见。SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW。
+            internal void Show(bool on)
+            {
+                if (on) SetWindowPos(hwnd, (IntPtr)(-1), 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010 | 0x0040);
+                else ShowWindow(hwnd, 0);
+            }
+            internal bool On { get { return IsWindowVisible(hwnd); } }
+            internal Rectangle Bounds
+            {
+                get
+                {
+                    RECT r;
+                    if (!GetWindowRect(hwnd, out r)) return Rectangle.Empty;
+                    return Rectangle.FromLTRB(r.L, r.T, r.R, r.B);
+                }
+            }
+            public void Dispose()
+            {
+                if (hwnd != IntPtr.Zero) { DestroyWindow(hwnd); hwnd = IntPtr.Zero; }
+            }
+        }
+
+        // ---- 实体 -> 绘图区像素折线 ----
+        // 视图平面 <-> 像素 的换算，和 ze:view / ze:wpts 那一套完全一致。
+        sealed class Projector
+        {
+            readonly ZwSoft.ZwCAD.Geometry.Matrix3d back;
+            readonly double cx, cy, vw, vh;
+            readonly int width, height;
+            internal Projector(ZwSoft.ZwCAD.Geometry.Matrix3d back, ZwSoft.ZwCAD.Geometry.Point2d center, double vw, double vh, int width, int height)
+            { this.back = back; this.cx = center.X; this.cy = center.Y; this.vw = vw; this.vh = vh; this.width = width; this.height = height; }
+            internal PointF P(ZwSoft.ZwCAD.Geometry.Point3d w) { return P(w.X, w.Y, w.Z); }
+            internal PointF P(double x, double y, double z)
+            {
+                ZwSoft.ZwCAD.Geometry.Point3d q = new ZwSoft.ZwCAD.Geometry.Point3d(x,y,z).TransformBy(back);
+                return new PointF((float)(((q.X-cx)/vw+0.5)*width), (float)((0.5-(q.Y-cy)/vh)*height));
+            }
+        }
+
+        static void Shape(Entity ent, Projector pj, List<PointF[]> outList)
+        {
+            Line ln = ent as Line;
+            if (ln != null) { outList.Add(new PointF[] { pj.P(ln.StartPoint), pj.P(ln.EndPoint) }); return; }
+            Circle ci = ent as Circle;
+            if (ci != null) { outList.Add(Samples(pj, ci.Center, ci.Radius, ci.Radius, 0, 2*Math.PI)); return; }
+            Arc ar = ent as Arc;
+            if (ar != null) { outList.Add(Samples(pj, ar.Center, ar.Radius, ar.Radius, ar.StartAngle, ar.EndAngle)); return; }
+            Ellipse el = ent as Ellipse;
+            if (el != null)
+            {
+                ZwSoft.ZwCAD.Geometry.Vector3d mx = el.MajorAxis;
+                outList.Add(Samples(pj, el.Center, el.MajorRadius, el.MinorRadius, mx.X, mx.Y, el.StartAngle, el.EndAngle));
+                return;
+            }
+            Polyline pl = ent as Polyline;
+            if (pl != null) { Polyline(pl, pj, outList); return; }
+            // 认不出来的（样条、块、文字、标注、填充……）就画外框：也算「有反馈」。
+            try
+            {
+                Extents3d ex = ent.GeometricExtents;
+                outList.Add(new PointF[] {
+                    pj.P(ex.MinPoint), pj.P(ex.MaxPoint.X, ex.MinPoint.Y, ex.MinPoint.Z),
+                    pj.P(ex.MaxPoint), pj.P(ex.MinPoint.X, ex.MaxPoint.Y, ex.MinPoint.Z),
+                    pj.P(ex.MinPoint) });
+            }
+            catch { }
+        }
+
+        // 圆/圆弧：角度按 OCS 的 XY 平面算（TR / EX 只支持平面视图，拉伸方向就是 +Z）。
+        static PointF[] Samples(Projector pj, ZwSoft.ZwCAD.Geometry.Point3d c, double major, double minor, double a0, double a1)
+        { return Samples(pj, c, major, minor, 1, 0, a0, a1); }
+
+        static PointF[] Samples(Projector pj, ZwSoft.ZwCAD.Geometry.Point3d c, double major, double minor, double ux, double uy, double a0, double a1)
+        {
+            while (a1 <= a0) a1 += 2*Math.PI;          // ARC 允许 a1 < a0，补足一圈
+            int n = Math.Max(12, Math.Min(180, (int)((a1-a0)/Math.PI*36)));
+            var pts = new PointF[n+1];
+            for (int i = 0; i <= n; i++)
+            {
+                double t = a0 + (a1-a0)*i/n, cs = Math.Cos(t), sn = Math.Sin(t);
+                pts[i] = pj.P(c.X + major*cs*ux - minor*sn*uy,
+                              c.Y + major*cs*uy + minor*sn*ux,
+                              c.Z);
+            }
+            return pts;
+        }
+
+        static void Polyline(Polyline pl, Projector pj, List<PointF[]> outList)
+        {
+            int n = pl.NumberOfVertices;
+            if (n < 2) return;
+            bool closed = pl.Closed;
+            var pts = new List<PointF>(n+1);
+            for (int i = 0; i < n; i++) pts.Add(pj.P(pl.GetPoint3dAt(i)));
+            if (closed) pts.Add(pts[0]);
+            outList.Add(pts.ToArray());
+        }
+
+        public void Dispose()
+        {
+            Wipe();
+            if (sticker != null)
+            {
+                try { sticker.Dispose(); } catch { }
+                sticker = null;
+            }
+        }
+    }
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L,T,R,B; }
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
@@ -105,6 +400,23 @@ public class ZWKitMouse
     [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref Point p);
     [DllImport("user32.dll")] static extern bool InvalidateRect(IntPtr h, IntPtr r, bool erase);
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; internal POINT(int x, int y) { X = x; Y = y; } }
+    [StructLayout(LayoutKind.Sequential)] struct SIZE { public int CX, CY; internal SIZE(int x, int y) { CX = x; CY = y; } }
+    [StructLayout(LayoutKind.Sequential, Pack = 1)] struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
+    [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr h, IntPtr dstDc, ref POINT dst, ref SIZE size, IntPtr srcDc, ref POINT src, int key, ref BLENDFUNCTION blend, int flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
     delegate bool EnumWindow(IntPtr h, IntPtr data);
     [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr h, EnumWindow callback, IntPtr data);
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
@@ -153,6 +465,9 @@ public class ZWKitMouse
         // 这样 ZWKCAP102 的既有行为与以前完全一致。
         public int Key;
         public int Wheel;
+        // TR / EX 要把鼠标移动交还给 CAD：CAD 自己的准星才会跟着鼠标走。
+        // 否则准星会僵在原地，只能再叠一个自绘光标上去，看起来就是「两个准星」。
+        public bool PassMove;
         public bool PreFilterMessage(ref Message m)
         {
             if (m.Msg == 0x20A) Wheel += unchecked((short)((m.WParam.ToInt64() >> 16) & 65535));
@@ -163,6 +478,8 @@ public class ZWKitMouse
                 else if (k == 85 && !AllowKeys) Undo = true;
                 else if (AllowKeys && Key == 0 && ((k >= 48 && k <= 57) || (k >= 65 && k <= 90))) Key = k;
             }
+            // 只放行「移动」这一条：按键、滚轮照旧全部拦下，免得 CAD 自己开始选择或缩放。
+            if (PassMove && m.Msg == 0x200) return false;
             return (m.Msg >= 0x200 && m.Msg <= 0x20E) ||
                    (m.Msg >= 0x100 && m.Msg <= 0x109);
         }
@@ -251,6 +568,34 @@ public class ZWKitMouse
         return Status("VISIBLE_AND_CENTERED=" + ok + ";RESTORED=" + (before == PrecisionCursor.VisibleFlags()));
     }
 
+    // 自检：在指定的绘图区比例坐标上跑一次悬停高亮，保持 hold 毫秒（期间照常抽消息，
+    // 所以屏幕上真的能看到高亮），返回压到的对象数。fx / fy 与捕获循环里用的那一套一致
+    // （0,0 = 绘图区左上角，1,1 = 右下角）。只给自检用，不参与 TR / EX 的正常流程。
+    [LispFunction("ZWK_HOVERCHECK_101")]
+    public static ResultBuffer HoverCheck(ResultBuffer args)
+    {
+        TypedValue[] a = args == null ? new TypedValue[0] : args.AsArray();
+        if (a.Length < 2 || a.Length > 3) return Status("ERROR");
+        var sz = (ZwSoft.ZwCAD.Geometry.Point2d)CadApp.GetSystemVariable("SCREENSIZE");
+        int w = (int)sz.X, h = (int)sz.Y;
+        if (w < 20 || h < 20) return Status("ERROR");
+        int x = (int)Math.Round(Convert.ToDouble(a[0].Value)*w);
+        int y = (int)Math.Round(Convert.ToDouble(a[1].Value)*h);
+        int hold = a.Length == 3 ? Convert.ToInt32(a[2].Value) : 0;
+        int n; string box, paper;
+        IntPtr probeCanvas = FindCanvas(w,h);
+        using (var hover = new HoverPreview())
+        {
+            hover.Attach(probeCanvas);
+            hover.Clear();
+            hover.Update(new Point(x,y), w, h, true);
+            n = hover.Hits; box = hover.Bounds; paper = hover.Paper;
+            DateTime until = DateTime.UtcNow.AddMilliseconds(hold);
+            while (DateTime.UtcNow < until) { Application.DoEvents(); Thread.Sleep(10); }
+        }
+        return Status("HOVER_HITS=" + n + ";BOX=" + box + ";PAPER=" + paper);
+    }
+
     [LispFunction("ZWK_MODULE_101")]
     public static ResultBuffer ModuleCheck(ResultBuffer args) { return Status("READY"); }
 
@@ -271,6 +616,10 @@ public class ZWKitMouse
         if (width < 20 || height < 20) return Status("ERROR");
         var filter = new InputFilter();
         filter.AllowKeys = allowKeys;
+        // TR / EX（ZWKCAP103）：鼠标移动交还给 CAD，用 CAD 自己的准星（配 CURSORSIZE=1
+        // 缩成一个小方块），也就是 AutoCAD 那个样子。拖动修剪（ZWKCAP102）保持老行为不变。
+        filter.PassMove = allowKeys;
+        bool ownCursor = !allowKeys;
         IntPtr canvas = IntPtr.Zero;
         Graphics graphics = null;
         Pen pen = null;
@@ -283,6 +632,9 @@ public class ZWKitMouse
         Application.AddMessageFilter(filter);
         PrecisionCursor precision = null;
         IntPtr nativeCanvas = IntPtr.Zero;
+        // 悬停高亮只给 TR / EX 的交互层；ZWKCAP102 连这个对象都不创建。
+        HoverPreview hover = allowKeys ? new HoverPreview() : null;
+        int viewWidth = width, viewHeight = height;
         try
         {
             nativeCanvas = FindCanvas(width,height);
@@ -291,12 +643,13 @@ public class ZWKitMouse
                 CadApp.DocumentManager.MdiActiveDocument.Editor.WriteMessage("\n未找到独立绘图区，已停止以避免准星残留。请使用模型空间单视口。");
                 return Status("ERROR");
             }
-            ClearNativeCrosshair(nativeCanvas);
-            precision = new PrecisionCursor();
+            if (hover != null) hover.Attach(nativeCanvas);
+            if (ownCursor) ClearNativeCrosshair(nativeCanvas);
+            if (ownCursor) precision = new PrecisionCursor();
             while (true)
             {
                 Application.DoEvents();
-                precision.Refresh();
+                if (precision != null) precision.Refresh();
                 if (filter.Cancel || Down(27) || Down(2)) return Status("CANCEL");
                 if (filter.Undo) return Status(drawing ? "CANCEL" : "UNDO");
                 // 只有空闲状态（没在画笔画）才把按键交还给 Lisp；画到一半按键不算选项。
@@ -341,10 +694,12 @@ public class ZWKitMouse
                             panLast=screen; panning=true;
                         }
                         else panning=false;
-                        if (viewChanged) ClearNativeCrosshair(nativeCanvas);
+                        if (viewChanged && ownCursor) ClearNativeCrosshair(nativeCanvas);
                     }
                     else panning=false;
-                    precision.Refresh();
+                    if (precision != null) precision.Refresh();
+                    // 视图动了，高亮的位置也就不对了，直接撤掉。
+                    if (hover != null) hover.Clear();
                     // A stroke cannot start while either navigation gesture is active.
                     if (held) ready=false;
                     Thread.Sleep(8);
@@ -352,6 +707,12 @@ public class ZWKitMouse
                 }
                 panning=false;
                 if (!held) ready = true;
+                // 空闲时跟着准星走：压到哪条线上，哪条线就亮起来。
+                if (hover != null)
+                {
+                    if (drawing) hover.Clear();
+                    else hover.Update(navPoint, viewWidth, viewHeight, inside);
+                }
                 if (!drawing && held && ready)
                 {
                     // Preserve Shift from the start of the stroke.  ZWCAD can
@@ -424,11 +785,12 @@ public class ZWKitMouse
         finally
         {
             Application.RemoveMessageFilter(filter);
+            if (hover != null) hover.Dispose();
             if (precision != null) precision.Dispose();
             if (pen!=null) pen.Dispose();
             if (graphics!=null) graphics.Dispose();
             if (canvas!=IntPtr.Zero) InvalidateRect(canvas,IntPtr.Zero,false);
-            if (nativeCanvas!=IntPtr.Zero) RestoreNativeCrosshair(nativeCanvas);
+            if (ownCursor && nativeCanvas!=IntPtr.Zero) RestoreNativeCrosshair(nativeCanvas);
         }
     }
 }

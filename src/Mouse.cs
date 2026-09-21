@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -106,7 +106,23 @@ public class ZWKitMouse
     {
         const int PenWidth = 3;
         static readonly Color Highlight = Color.FromArgb(0, 232, 255);
+        // 修剪边界集合（实体的句柄）。null = 全部对象（快速模式的默认）。
+        // TR / EX 的 LISP 侧用 ZWK_BOUND_101 传进来，悬停预览靠它算「会被剪掉的那一段」。
+        static HashSet<string> boundary;
+        internal static void SetBoundary(string list)
+        {
+            if (string.IsNullOrEmpty(list)) { boundary = null; return; }
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string s in list.Split(',')) if (s.Length > 0) set.Add(s.Trim());
+            boundary = set.Count == 0 ? null : set;
+        }
+        static bool InBoundary(Entity e)
+        {
+            if (boundary == null) return true;
+            try { return boundary.Contains(e.Handle.ToString()); } catch { return true; }
+        }
         readonly List<ObjectId> lit = new List<ObjectId>();
+        string sig = "";                 // 亮起来的「一段」的签名（对象 + 参数区间），变了才重画
         Rectangle dirty = Rectangle.Empty;
         Point last = new Point(int.MinValue, int.MinValue);
         DateTime stamp = DateTime.MinValue;
@@ -136,11 +152,12 @@ public class ZWKitMouse
         }
 
         internal void Clear()
-        { Wipe(); last = new Point(int.MinValue, int.MinValue); stamp = DateTime.MinValue; }
+        { Wipe(); sig = ""; last = new Point(int.MinValue, int.MinValue); stamp = DateTime.MinValue; }
 
         // 每帧调用；内部节流（移动 >= 2 像素、距上次 >= 45 毫秒才真的去查），
         // 免得每个 8 毫秒的空转都去问一次选择集。
-        internal void Update(Point p, int width, int height, bool inside)
+        // shift = 按住 Shift（延伸模式）：那句提示要延伸，不做「剪掉哪一段」的预览。
+        internal void Update(Point p, int width, int height, bool inside, bool shift)
         {
             if (!inside) { Clear(); return; }
             if (Math.Abs(p.X-last.X) < 2 && Math.Abs(p.Y-last.Y) < 2) return;
@@ -149,7 +166,7 @@ public class ZWKitMouse
             var doc = CadApp.DocumentManager.MdiActiveDocument;
             if (doc == null || width < 1 || height < 1) return;
             var ed = doc.Editor;
-            ZwSoft.ZwCAD.Geometry.Point3d a, b;
+            ZwSoft.ZwCAD.Geometry.Point3d a, b, cursor;
             Projector pj;
             try
             {
@@ -164,6 +181,8 @@ public class ZWKitMouse
                     t = ZwSoft.ZwCAD.Geometry.Matrix3d.Rotation(-view.ViewTwist,view.ViewDirection,view.Target)*t;
                     a = new ZwSoft.ZwCAD.Geometry.Point3d(cx-d,cy-d,0).TransformBy(t);
                     b = new ZwSoft.ZwCAD.Geometry.Point3d(cx+d,cy+d,0).TransformBy(t);
+                    // 光标本身的世界坐标（就是那个小窗的中心），用来判断现下会剪掉哪一段
+                    cursor = new ZwSoft.ZwCAD.Geometry.Point3d((a.X+b.X)/2, (a.Y+b.Y)/2, (a.Z+b.Z)/2);
                     pj = new Projector(t.Inverse(), view.CenterPoint, vw, vh, width, height);
                 }
             }
@@ -176,33 +195,115 @@ public class ZWKitMouse
                     try { ids.AddRange(r.Value.GetObjectIds()); } finally { r.Value.Dispose(); }
             }
             catch { ids.Clear(); }   // 查询失败就当作「没压到东西」
-            if (Same(ids)) return;   // 还是同一批对象，别动它，免得闪
-            Wipe();
-            Paint(ids, pj);
-        }
-
-        bool Same(List<ObjectId> ids)
-        {
-            if (ids.Count != lit.Count) return false;
-            foreach (ObjectId id in ids) if (!lit.Contains(id)) return false;
-            return true;
-        }
-
-        void Paint(List<ObjectId> ids, Projector pj)
-        {
-            if (canvas == IntPtr.Zero || ids.Count == 0) return;
             var shapes = new List<PointF[]>();
-            var doc = CadApp.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
+            var sb = new System.Text.StringBuilder();
             using (var tr = doc.Database.TransactionManager.StartTransaction())
                 foreach (ObjectId id in ids)
                     try
                     {
                         Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                        if (ent != null) Shape(ent, pj, shapes);
+                        if (ent == null) continue;
+                        PointF[] poly; string what;
+                        if (!shift && Piece(ent, cursor, pj, tr, out poly, out what)) shapes.Add(poly);
+                        else { Shape(ent, pj, shapes); what = "*"; }
+                        sb.Append(id.ToString()).Append(':').Append(what).Append(';');
                     }
                     catch { }   // 不在图里 / 打不开的对象直接放过
-            if (shapes.Count == 0) return;
+            // 亮起来的还是同一段就别动它，免得闪（同一个对象、同一段参数区间才算没变）。
+            string s = sb.ToString();
+            if (s == sig) return;
+            sig = s;
+            Wipe();
+            lit.AddRange(ids);
+            Render(shapes);
+        }
+
+        // 「点下去会被剪掉的那一段」——AutoCAD 快速模式的预览就是这样：
+        // 以光标在对象上的位置为界，取它到左右最近两个交点之间的部分；一个交点都没有
+        // （那这个对象剪不动，快速模式下会被直接删掉）就整条亮。
+        // 只认曲线（直线/圆弧/圆/多段线…）；块、文字、标注这类判断不了，返回 false 由调用方按整条画。
+        bool Piece(Entity ent, ZwSoft.ZwCAD.Geometry.Point3d cursor, Projector pj, Transaction tr,
+                   out PointF[] poly, out string what)
+        {
+            poly = null; what = "";
+            Curve cv = ent as Curve;
+            if (cv == null) return false;
+            double p, lo, hi;
+            List<ObjectId> near;
+            try
+            {
+                p = cv.GetParameterAtPoint(cv.GetClosestPointTo(cursor, false));
+                lo = cv.StartParam; hi = cv.EndParam;
+                near = Neighbours(ent, tr);
+            }
+            catch { return false; }
+            foreach (ObjectId bid in near)
+                try
+                {
+                    Entity b = tr.GetObject(bid, OpenMode.ForRead) as Entity;
+                    if (b == null) continue;
+                    var pts = new ZwSoft.ZwCAD.Geometry.Point3dCollection();
+                    ent.IntersectWith(b, Intersect.OnBothOperands, pts, IntPtr.Zero, IntPtr.Zero);
+                    foreach (ZwSoft.ZwCAD.Geometry.Point3d q in pts)
+                    {
+                        double t;
+                        try { t = cv.GetParameterAtPoint(q); } catch { continue; }
+                        if (t < p-1e-9) { if (t > lo) lo = t; }
+                        else if (t > p+1e-9) { if (t < hi) hi = t; }
+                    }
+                }
+                catch { }
+            if (!(hi > lo + 1e-12)) return false;
+            int n = Math.Max(2, Math.Min(180, (int)((hi-lo)/Math.PI*36)));
+            var arr = new PointF[n+1];
+            for (int i = 0; i <= n; i++)
+                arr[i] = pj.P(cv.GetPointAtParameter(lo + (hi-lo)*i/n));
+            poly = arr;
+            what = lo.ToString("0.#####", CultureInfo.InvariantCulture) + "," + hi.ToString("0.#####", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        // 悬停对象附近的对象（拿它的范围开个小窗去问，绝不整图扫），求交点用。
+        // 只留下在修剪边界集合里的；边界集合为空（快速模式的默认）= 全部对象都算边界。
+        List<ObjectId> Neighbours(Entity ent, Transaction tr)
+        {
+            var outList = new List<ObjectId>();
+            var doc = CadApp.DocumentManager.MdiActiveDocument;
+            if (doc == null) return outList;
+            ZwSoft.ZwCAD.DatabaseServices.Extents3d ex;
+            try { ex = ent.GeometricExtents; } catch { return outList; }
+            var p0 = ex.MinPoint; var p1 = ex.MaxPoint;
+            double m = 1e-6 + 0.001*Math.Max(p1.X-p0.X, p1.Y-p0.Y);   // 略微放大，免得正好卡端点的交点漏掉
+            PromptSelectionResult r;
+            try
+            {
+                r = doc.Editor.SelectCrossingWindow(
+                    new ZwSoft.ZwCAD.Geometry.Point3d(p0.X-m, p0.Y-m, p0.Z),
+                    new ZwSoft.ZwCAD.Geometry.Point3d(p1.X+m, p1.Y+m, p1.Z));
+            }
+            catch { return outList; }
+            if (r == null || r.Status != PromptStatus.OK || r.Value == null) return outList;
+            try
+            {
+                foreach (ObjectId id in r.Value.GetObjectIds())
+                {
+                    if (id == ent.ObjectId) continue;
+                    try
+                    {
+                        Entity e = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                        if (e != null && InBoundary(e)) outList.Add(id);
+                    }
+                    catch { }
+                }
+            }
+            finally { r.Value.Dispose(); }
+            return outList;
+        }
+
+        // 把算好的屏幕折线贴到置顶透明窗上。
+        void Render(List<PointF[]> shapes)
+        {
+            if (canvas == IntPtr.Zero || shapes.Count == 0) return;
             float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, bt = float.MinValue;
             foreach (PointF[] s in shapes)
                 foreach (PointF q in s)
@@ -233,7 +334,6 @@ public class ZWKitMouse
             if (sticker == null) sticker = new Sticker();
             bool ok = Paste(sticker, image, origin.X+x0, origin.Y+y0, w, h);
             paper = sticker.Handle + ",ok=" + ok + ",on=" + sticker.On + ",at=" + sticker.Bounds;
-            lit.AddRange(ids);
         }
 
         // 把一块位图贴到置顶透明窗口上（每像素 alpha，只有画上去的像素不透明，其余点击穿透）。
@@ -639,7 +739,8 @@ public class ZWKitMouse
         public void Dispose() { try { sticker.Dispose(); } catch { } }
     }
 
-    // (ZWK_HOVER_101 fx fy) —— fx/fy 是 0~1 的绘图区比例坐标（0,0 = 左下角，与 ze:frac 一致）。
+    // (ZWK_HOVER_101 fx fy [shift]) —— fx/fy 是 0~1 的绘图区比例坐标（0,0 = 左下角，与 ze:frac 一致）；
+    // shift = 1 表示此刻按住 Shift（延伸），不做「剪掉哪一段」的预览。
     // 返回 "OK;<命中对象数>" / "OFF" / "NOCANVAS" / "NOSCREEN" / "ERR:..."。
     [LispFunction("ZWK_HOVER_101")]
     public static ResultBuffer HoverCheck2(ResultBuffer args)
@@ -649,6 +750,9 @@ public class ZWKitMouse
             TypedValue[] a = args == null ? new TypedValue[0] : args.AsArray();
             double fx, fy;
             if (!Frac(a, out fx, out fy)) return Status("ERROR");
+            bool shift = false;
+            if (a.Length > 2)
+                try { shift = Convert.ToInt32(a[2].Value) != 0; } catch { }
             int w, h;
             if (!ScreenSize(out w, out h)) return Status("NOSCREEN");
             IntPtr canvas = FindCanvas(w, h);
@@ -656,8 +760,23 @@ public class ZWKitMouse
             bool inside = fx >= 0.0 && fx <= 1.0 && fy >= 0.0 && fy <= 1.0;
             if (hover == null) hover = new HoverPreview();
             hover.Attach(canvas);
-            hover.Update(new Point((int)Math.Round(fx*w), (int)Math.Round((1.0-fy)*h)), w, h, inside);
+            hover.Update(new Point((int)Math.Round(fx*w), (int)Math.Round((1.0-fy)*h)), w, h, inside, shift);
             return Status(inside ? "OK;" + hover.Hits : "OFF");
+        }
+        catch (System.Exception ex) { return Status("ERR:" + ex.Message); }
+    }
+
+    // (ZWK_BOUND_101 "句柄,句柄,...") —— 修剪/延伸的边界集合；空串 = 全部对象（快速模式的默认）。
+    // 悬停预览要按它算「会被剪掉的那一段」，所以 LISP 侧每次边界变化后都要送一次。
+    [LispFunction("ZWK_BOUND_101")]
+    public static ResultBuffer Bound(ResultBuffer args)
+    {
+        try
+        {
+            TypedValue[] a = args == null ? new TypedValue[0] : args.AsArray();
+            string s = a.Length > 0 ? Convert.ToString(a[0].Value) : "";
+            HoverPreview.SetBoundary(s);
+            return Status("OK");
         }
         catch (System.Exception ex) { return Status("ERR:" + ex.Message); }
     }
@@ -825,7 +944,7 @@ public class ZWKitMouse
         {
             hover.Attach(probeCanvas);
             hover.Clear();
-            hover.Update(new Point(x,y), w, h, true);
+            hover.Update(new Point(x,y), w, h, true, false);
             n = hover.Hits; box = hover.Bounds; paper = hover.Paper;
             DateTime until = DateTime.UtcNow.AddMilliseconds(hold);
             while (DateTime.UtcNow < until) { Application.DoEvents(); Thread.Sleep(10); }
@@ -946,7 +1065,7 @@ public class ZWKitMouse
                 if (hover != null)
                 {
                     if (drawing) hover.Clear();
-                    else hover.Update(navPoint, viewWidth, viewHeight, inside);
+                    else hover.Update(navPoint, viewWidth, viewHeight, inside, false);
                 }
                 if (!drawing && held && ready)
                 {

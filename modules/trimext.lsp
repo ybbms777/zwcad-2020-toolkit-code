@@ -300,8 +300,8 @@
 (defun ze:key (isExt u k / md)
   (setq md (ze:mode))
   (cond
-    ((and (not isExt) (equal k "T")) (ze:pickbounds isExt nil) u)
-    ((and isExt (equal k "B")) (ze:pickbounds isExt nil) u)
+    ((and (not isExt) (equal k "T")) (ze:pickbounds isExt nil) (ze:bound-send) u)
+    ((and isExt (equal k "B")) (ze:pickbounds isExt nil) (ze:bound-send) u)
     ((equal k "C") (ze:opt-cross isExt) T)
     ((equal k "O") (ze:opt-mode isExt) u)
     ((equal k "P") (ze:opt-proj) u)
@@ -374,11 +374,25 @@
 (defun zwk:module () (ze:dll 'ZWK_MODULE_101 nil))
 (defun zwk:shift () (ze:dll 'ZWK_SHIFT_101 nil))
 (defun zwk:state () (ze:dll 'ZWK_STATE_101 nil))
-(defun zwk:hover (f) (ze:dll 'ZWK_HOVER_101 f))
+(defun zwk:hover (f red) (ze:dll 'ZWK_HOVER_101 (append f (list red))))
+(defun zwk:bound (s) (ze:dll 'ZWK_BOUND_101 (list s)))
 (defun zwk:hover-end () (ze:dll 'ZWK_HOVER_END_101 nil))
 (defun zwk:press (f ms) (ze:dll 'ZWK_PRESS_101 (append f (list ms))))
 (defun zwk:ink (f red) (ze:dll 'ZWK_INK_101 (append f (list red))))
 (defun zwk:ink-end () (ze:dll 'ZWK_INK_END_101 nil))
+
+;; 把当前的修剪边界集合告诉 DLL：悬停预览要按它算「点下去会被剪掉的那一段」。
+;; 空串 = 全部对象（快速模式的默认边界）。边界一变（T/B 选项）就得重新送一次。
+(defun ze:bound-send (/ s i n e h)
+  (setq s "" i 0 n (if ze:bounds (sslength ze:bounds) 0))
+  (while (< i n)
+    (setq e (ssname ze:bounds i))
+    (if e
+      (progn
+        (setq h (cdr (assoc 5 (entget e))))
+        (if h (setq s (strcat s (if (= s "") "" ",") h)))))
+    (setq i (1+ i)))
+  (zwk:bound s))
 
 ;; 左键按着吗（DLL 回包 "1;fx;fy" 的第一段）。
 (defun zwk:down (/ s)
@@ -418,10 +432,10 @@
                   (* (- (cadr f1) (cadr f2)) (cadr sz)) 0.0)
             (list 0.0 0.0 0.0)))
 
-;; ===== 悬停高亮 =====
-;; 压到哪条线，哪条线亮起来（DLL 算实体的屏幕折线，画在置顶透明窗上）。
+;; 悬停高亮：只亮「点下去会被剪掉的那一段」（AutoCAD 快速模式的预览就是这样，不是整条线）。
+;; 按住 Shift 是延伸模式，不做那一段的预览（交给 DLL 整条亮）。
 (defun ze:hover (p / r)
-  (setq r (zwk:hover (ze:frac p))
+  (setq r (zwk:hover (ze:frac p) (if (equal (zwk:shift) "1") 1 0))
         ze:hovst r)
   (if (and (not ze:hwarn) (or (null r) (/= (substr r 1 2) "OK")))
     (progn (setq ze:hwarn T)
@@ -550,6 +564,7 @@
 ;; ============================================================ 主循环
 (defun ze:loop (isExt / u pending res kind data pts act go)
   (setq u nil pending nil go T)
+  (ze:bound-send)          ;; 把边界集合告诉 DLL（悬停预览要算「会被剪掉的那一段」）
   (princ (ze:prompt isExt u))
   (while go
     (setq res (ze:capture) kind (car res) data (cadr res))

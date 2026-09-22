@@ -16,7 +16,9 @@
   (if (and trimMode (> (length pts) 1))
     (zt:trim pts)
     (progn
-  (command (if trimMode "_.TRIM" "_.EXTEND") "")
+  ;; 边界给真实选择集（zt:bounds 在 trim.lsp，boot.lsp 保证 extend 启用时 trim.lsp 一定加载）；
+  ;; 传 "" 在 ZWCAD 上什么都不延伸（1.2.31 实测）。
+  (command (if trimMode "_.TRIM" "_.EXTEND") (zt:bounds) "")
   (if (= (length pts) 1)
     (command "_non" (car pts))
     (progn
@@ -88,5 +90,5 @@
 ;; EXD = 拖动延伸。同 TRD：ZWCAD 不认值别名，必须真 defun。
 (defun c:EXD () (zx:run nil 'zx:capture))
 (defun c:EXY () (zx:run T 'zx:capture))
-(princ "\n整合延伸模块已加载：EX 单击或拖动延伸，按住 Shift 修剪；EXY 仅校验轨迹。")
+(princ "\nEXD 拖动延伸已加载：单击或拖动延伸，按住 Shift 修剪；EXY 仅校验轨迹。")
 (princ)

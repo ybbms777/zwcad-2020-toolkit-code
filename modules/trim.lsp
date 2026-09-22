@@ -26,6 +26,13 @@
        (setq layer (tblsearch "LAYER" (cdr (assoc 8 data))))
        (= 0 (logand 4 (cdr (assoc 70 layer))))))
 
+;; 全部对象作边界（与 trimext.lsp 的 ze:cmd 一致：标注类不当边界）。空图时退回 ""。
+(defun zt:bounds (/ s)
+  (setq s (ssget "_X" '((-4 . "<NOT")
+                        (0 . "TEXT,MTEXT,ATTDEF,ATTRIB,DIMENSION,LEADER,MULTILEADER,TOLERANCE,HATCH,TABLE")
+                        (-4 . "NOT>"))))
+  (if s s ""))
+
 (defun zt:trim (pts / p ss i ent snapshots item erased)
   ;; Snapshot only editable curve objects actually crossed by this stroke.
   (setq ss (ssget "_F" pts '((0 . "LINE,ARC,CIRCLE,LWPOLYLINE,POLYLINE,ELLIPSE,SPLINE")))
@@ -37,7 +44,9 @@
         (setq ent (ssname ss i) i (1+ i))
         (if (zt:unlocked ent)
           (setq snapshots (cons (list ent (zt:state ent)) snapshots))))))
-  (command "_.TRIM" "" "_F")
+  ;; 边界必须给真实选择集：传 "" 时 ZWCAD 的 TRIM 走完全程却什么都不剪（1.2.31 实测），
+  ;; 下面的快照比对又会把划过的线全部判成「没剪到」整根删掉 —— ZT 就退化成了栏选删除。
+  (command "_.TRIM" (zt:bounds) "" "_F")
   (foreach p pts (command "_non" p))
   (command "" "")
   ;; Do not erase curves that TRIM already changed, split, or removed.
@@ -63,7 +72,7 @@
     (princ))
   (cond
     ((not (zt:ensure))
-      (princ "\n鼠标模块未通过检查，已停止。请加载本版 DragTrimV16.dll 后重试。"))
+      (princ "\n鼠标模块未通过检查，已停止。请确认 bin/ZWKit.Core.102.dll 已加载（ZWKCHECK 自检）后重试。"))
     ((or (/= (getvar "TILEMODE") 1) (not (member (getvar "PERSPECTIVE") '(nil 0)))
          (> (abs (car (getvar "VIEWDIR"))) 1e-8)
          (> (abs (cadr (getvar "VIEWDIR"))) 1e-8)
@@ -113,5 +122,5 @@
 ;; 这种「值别名」（变量有值但命令不注册，敲 TRD 会报未知命令）。
 (defun c:TRD () (zt:run nil 'zt:capture))
 (defun c:ZTY () (zt:run T 'zt:capture))
-(princ "\nTR 拖动修剪已就绪。")
+(princ "\nZT/TRD 拖动修剪已就绪。")
 (princ)

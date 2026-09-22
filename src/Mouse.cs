@@ -129,8 +129,10 @@ public class ZWKitMouse
         // 修剪边界集合（实体的句柄）。null = 全部对象（快速模式的默认）。
         // TR / EX 的 LISP 侧用 ZWK_BOUND_101 传进来，悬停预览靠它算「会被剪掉的那一段」。
         static HashSet<string> boundary;
+        static int boundaryVer;          // 边界每变一次 +1，邻居缓存据此作废
         internal static void SetBoundary(string list)
         {
+            boundaryVer++;
             if (string.IsNullOrEmpty(list)) { boundary = null; return; }
             var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (string s in list.Split(',')) if (s.Length > 0) set.Add(s.Trim());
@@ -226,8 +228,11 @@ public class ZWKitMouse
                     if (!hide && !OurWindow(GetForegroundWindow())) hide = true;
                     if (hide)
                     {
-                        if (sticker != null) sticker.Show(false);
-                        if (pick != null) pick.Show(false);
+                        // 窗口属于主线程：这里只能用 ShowWindowAsync（投递消息、不等待）。
+                        // 同步的 ShowWindow 会等主线程处理，主线程在 WatchOff 里 Join 本线程时就会互等。
+                        Sticker s = sticker, k = pick;
+                        if (s != null) s.HideAsync();
+                        if (k != null) k.HideAsync();
                     }
                 }
                 catch { }
@@ -254,6 +259,8 @@ public class ZWKitMouse
 
         internal void WatchOff()
         {
+            // 每次拾取结束（hover-end）后 LISP 侧就会执行修剪 / 延伸，几何变了，邻居缓存作废
+            nbCache.Clear();
             watchStop = true;
             Thread t = watch;
             watch = null;
@@ -306,6 +313,18 @@ public class ZWKitMouse
                     b = new ZwSoft.ZwCAD.Geometry.Point3d(cx+d,cy+d,0).TransformBy(t);
                     // 光标本身的世界坐标（就是那个小窗的中心），用来判断现下会剪掉哪一段
                     cursor = new ZwSoft.ZwCAD.Geometry.Point3d((a.X+b.X)/2, (a.Y+b.Y)/2, (a.Z+b.Z)/2);
+                    // 屏幕四个角的世界坐标 -> 屏幕范围（有视图转角时取外接矩形）
+                    double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+                    foreach (double sxk in new double[] { -0.5, 0.5 })
+                        foreach (double syk in new double[] { -0.5, 0.5 })
+                        {
+                            var c = new ZwSoft.ZwCAD.Geometry.Point3d(view.CenterPoint.X + sxk*vw, view.CenterPoint.Y + syk*vh, 0).TransformBy(t);
+                            minX = Math.Min(minX, c.X); minY = Math.Min(minY, c.Y);
+                            maxX = Math.Max(maxX, c.X); maxY = Math.Max(maxY, c.Y);
+                        }
+                    viewLo = new ZwSoft.ZwCAD.Geometry.Point3d(minX, minY, 0);
+                    viewHi = new ZwSoft.ZwCAD.Geometry.Point3d(maxX, maxY, 0);
+                    viewOk = true;
                     pj = new Projector(t.Inverse(), view.CenterPoint, vw, vh, width, height);
                 }
             }
@@ -365,6 +384,14 @@ public class ZWKitMouse
                 near = Neighbours(ent, tr);
             }
             catch { return false; }
+            // 闭合曲线（圆 / 闭合多段线 / 闭合样条）的参数是一圈：光标两侧最近的交点可能
+            // 隔着参数起点（0 点），不能再按「比 p 小 / 比 p 大」去找，要按环上的距离找，
+            // 否则高亮的会是另一半或一小截（审查发现）。
+            bool closed = false;
+            try { closed = cv.Closed; } catch { }
+            double period = hi - lo, start = lo;
+            double dLo = double.MaxValue, dHi = double.MaxValue;
+            bool any = false;
             foreach (ObjectId bid in near)
                 try
                 {
@@ -380,16 +407,42 @@ public class ZWKitMouse
                     {
                         double t;
                         try { t = cv.GetParameterAtPoint(q); } catch { continue; }
-                        if (t < p-1e-9) { if (t > lo) lo = t; }
-                        else if (t > p+1e-9) { if (t < hi) hi = t; }
+                        if (closed && period > 1e-12)
+                        {
+                            double back = p - t, fwd = t - p;
+                            while (back <= 1e-9) back += period;
+                            while (fwd <= 1e-9) fwd += period;
+                            if (back < period - 1e-9 && back < dLo) dLo = back;
+                            if (fwd < period - 1e-9 && fwd < dHi) dHi = fwd;
+                            any = true;
+                        }
+                        else
+                        {
+                            if (t < p-1e-9) { if (t > lo) lo = t; }
+                            else if (t > p+1e-9) { if (t < hi) hi = t; }
+                        }
                     }
                 }
                 catch { }
+            if (closed && period > 1e-12)
+            {
+                // 一个交点都没有：整圈剪不动，交给调用方按整条画
+                if (!any || dLo == double.MaxValue || dHi == double.MaxValue) return false;
+                lo = p - dLo; hi = p + dHi;
+            }
             if (!(hi > lo + 1e-12)) return false;
             int n = Math.Max(2, Math.Min(180, (int)((hi-lo)/Math.PI*36)));
             var arr = new PointF[n+1];
             for (int i = 0; i <= n; i++)
-                arr[i] = pj.P(cv.GetPointAtParameter(lo + (hi-lo)*i/n));
+            {
+                double u = lo + (hi-lo)*i/n;
+                if (closed && period > 1e-12)
+                {
+                    while (u < start) u += period;
+                    while (u > start + period) u -= period;
+                }
+                arr[i] = pj.P(cv.GetPointAtParameter(u));
+            }
             poly = arr;
             what = lo.ToString("0.#####", CultureInfo.InvariantCulture) + "," + hi.ToString("0.#####", CultureInfo.InvariantCulture);
             return true;
@@ -402,9 +455,22 @@ public class ZWKitMouse
             var outList = new List<ObjectId>();
             var doc = CadApp.DocumentManager.MdiActiveDocument;
             if (doc == null) return outList;
+            // 同一视图、同一边界集合下，同一个对象的邻居不会变：缓存起来，
+            // 光标沿着一根线移动时不用每 45 毫秒重新开窗选一次。
+            if (nbVer != boundaryVer || nbView != viewSig) { nbCache.Clear(); nbVer = boundaryVer; nbView = viewSig; }
+            List<ObjectId> cached;
+            if (nbCache.TryGetValue(ent.ObjectId, out cached)) return cached;
             ZwSoft.ZwCAD.DatabaseServices.Extents3d ex;
             try { ex = ent.GeometricExtents; } catch { return outList; }
             var p0 = ex.MinPoint; var p1 = ex.MaxPoint;
+            // 裁到当前屏幕范围：长直线 / 大多段线的范围接近整张图，不裁的话每次悬停都在全图里
+            // 选一遍、逐个求交，大图会卡（审查发现）。选择集接口本来也只认屏幕内的对象，裁掉不丢结果。
+            if (viewOk)
+            {
+                p0 = new ZwSoft.ZwCAD.Geometry.Point3d(Math.Max(p0.X, viewLo.X), Math.Max(p0.Y, viewLo.Y), p0.Z);
+                p1 = new ZwSoft.ZwCAD.Geometry.Point3d(Math.Min(p1.X, viewHi.X), Math.Min(p1.Y, viewHi.Y), p1.Z);
+                if (p1.X < p0.X || p1.Y < p0.Y) { nbCache[ent.ObjectId] = outList; return outList; }
+            }
             double m = 1e-6 + 0.001*Math.Max(p1.X-p0.X, p1.Y-p0.Y);   // 略微放大，免得正好卡端点的交点漏掉
             PromptSelectionResult r;
             try
@@ -429,8 +495,15 @@ public class ZWKitMouse
                 }
             }
             finally { r.Value.Dispose(); }
+            nbCache[ent.ObjectId] = outList;
             return outList;
         }
+        readonly Dictionary<ObjectId, List<ObjectId>> nbCache = new Dictionary<ObjectId, List<ObjectId>>();
+        int nbVer = -1;
+        string nbView = null;
+        // 当前屏幕在 WCS 下的范围（Update 里算），Neighbours 用它裁窗口
+        ZwSoft.ZwCAD.Geometry.Point3d viewLo, viewHi;
+        bool viewOk;
 
         // 把算好的屏幕折线贴到置顶透明窗上。
         void Render(List<PointF[]> shapes)
@@ -524,6 +597,8 @@ public class ZWKitMouse
                 if (on) SetWindowPos(hwnd, (IntPtr)(-1), 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010 | 0x0040);
                 else ShowWindow(hwnd, 0);
             }
+            // 给看门狗线程用：跨线程隐藏，不阻塞。
+            internal void HideAsync() { IntPtr h = hwnd; if (h != IntPtr.Zero) ShowWindowAsync(h, 0); }
             internal bool On { get { return IsWindowVisible(hwnd); } }
             internal Rectangle Bounds
             {
@@ -654,6 +729,7 @@ public class ZWKitMouse
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h, int cmd);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);

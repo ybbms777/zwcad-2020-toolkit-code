@@ -10,13 +10,23 @@
     (progn (setq value (read (read-line f))) (close f) value)
     nil))
 (defun zwk:ready () (equal (zwk:bridge "ZWKREADY102") '("READY")))
-(defun zwk:smooth (/ old v)
-  (setq v (getvar "VIEWRES"))
+;; ACADLSPASDOC=1：本文件在「每张图」打开时都会跑一遍（LISP 命令是按图纸隔离的，必须这样）。
+;; VIEWRES 存在图纸里，改它会把图纸标成「已修改」—— 客户图纸一打开就问要不要保存。
+;; 用 acad-push-dbmod / acad-pop-dbmod 包起来，改完不算修改（2026-09-22 真机确认 ZWCAD 2020 有这两个函数，
+;; 对照：不包 DBMOD=1，包了 DBMOD=0）。
+;; 注意 ZWCAD 没有 VIEWRES 系统变量，(getvar "VIEWRES") 恒为 nil —— 原来的「已是 20000 就跳过」从没生效过，
+;; 现在改用 DLL 读出的当前平滑度（zwk:smooth-value）判断。
+(defun zwk:smooth (/ old v push)
+  (setq v (vl-catch-all-apply 'zwk:smooth-value nil))
+  (if (vl-catch-all-error-p v) (setq v nil))
   (if (or (null v) (/= v 20000))
     (progn
-      (setq old (getvar "CMDECHO"))
+      (setq old (getvar "CMDECHO")
+            push (and acad-push-dbmod acad-pop-dbmod))
       (setvar "CMDECHO" 0)
+      (if push (vl-catch-all-apply 'acad-push-dbmod nil))
       (command "_.VIEWRES" "_Y" 20000)
+      (if push (vl-catch-all-apply 'acad-pop-dbmod nil))
       (setvar "CMDECHO" old))))
 (defun zwk:smooth-value () (zwk:bridge "ZWKSMOOTH102"))
 (defun zwk:selection-ok ()
@@ -65,7 +75,9 @@
   (princ))
 (if (and zwk:root (findfile (strcat zwk:root "/modules.lsp")))
   (progn
-    (command "_.NETLOAD" (strcat zwk:root "/bin/ZWKit.Core.102.dll"))
+    ;; DLL 在整个 CAD 进程里只需要载一次；第二张图起它的 LISP 函数已经在了，不再重复 NETLOAD。
+    (if (not ZWK_MODULE_101)
+      (command "_.NETLOAD" (strcat zwk:root "/bin/ZWKit.Core.102.dll")))
     (setq zwk:enabled '("dimensions" "trim" "extend" "tolerance" "symbols" "font" "dimline" "frame" "tke"))
     (if (findfile (strcat zwk:root "/selection.lsp")) (load (strcat zwk:root "/selection.lsp")))
     (load (strcat zwk:root "/modules.lsp"))

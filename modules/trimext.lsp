@@ -12,6 +12,7 @@
 (setq ze:bounds nil)
 (setq ze:mark nil)
 (setq ze:shift nil)
+(setq ze:ops 0)      ;; 本次命令里做了几次可撤销的操作 —— 放弃(U) 只能撤这么多次，不能撤到命令之前
 
 (defun ze:mode (/ v)
   (if ze:md ze:md
@@ -145,7 +146,14 @@
        (setq layer (tblsearch "LAYER" (cdr (assoc 8 data))))
        (= 0 (logand 4 (cdr (assoc 70 layer))))))
 
-;; 把选择集里的对象存成「实体名 + 数据快照」，供操作后比对。
+;; 能被修剪的曲线类对象。只有它们才有资格进「删除修剪不到的」候选：
+;; 块参照 / 点 / 构造线 / 图像等原生 TRIM 本来就剪不动，进了候选就会被当成
+;; 「没修剪到」整个删掉（审查发现：窗交框到图框块，整个图框被删）。
+(defun ze:curvep (e / d)
+  (and (setq d (entget e))
+       (wcmatch (cdr (assoc 0 d)) "LINE,ARC,CIRCLE,LWPOLYLINE,POLYLINE,ELLIPSE,SPLINE")))
+
+;; 把选择集里的对象存成「实体名 + 数据快照」，供操作后比对。只收曲线（见 ze:curvep）。
 (defun ze:snap (ss / i n e out)
   (setq out nil)
   (if ss
@@ -153,8 +161,25 @@
       (setq i 0 n (sslength ss))
       (while (< i n)
         (setq e (ssname ss i))
-        (if (ze:unlocked e) (setq out (cons (list e (ze:state e)) out)))
+        (if (and (ze:unlocked e) (ze:curvep e)) (setq out (cons (list e (ze:state e)) out)))
         (setq i (1+ i)))))
+  out)
+
+;; 离拾取点（UCS）最近的曲线；非曲线或算不出距离的跳过。ents 为实体名表。
+(defun ze:nearest (ents p / w best bd e q d)
+  (setq w (trans p 1 0) best nil bd nil)
+  (foreach e ents
+    (setq q (vl-catch-all-apply 'vlax-curve-getClosestPointTo (list e w)))
+    (if (and (not (vl-catch-all-error-p q)) q)
+      (progn
+        (setq d (distance (list (car q) (cadr q)) (list (car w) (cadr w))))
+        (if (or (null bd) (< d bd)) (setq bd d best e)))))
+  best)
+
+;; 选择集 -> 实体名表
+(defun ze:names (ss / i out)
+  (setq out nil i 0)
+  (if ss (while (< i (sslength ss)) (setq out (cons (ssname ss i) out) i (1+ i))))
   out)
 
 ;; 本次选择会碰到哪些对象（给「删掉修剪不到的」用）。
@@ -170,11 +195,20 @@
 ;; ZWCAD 原生不会（2026-09-21 真机实测 T1：不可修剪的对象原样留着、也不报错），
 ;; 所以这一条得我们自己补。判据同 trim.lsp 的 zt:trim —— 操作前后实体数据没变 = 没被修剪到。
 ;; 这里不打印提示：AutoCAD 对这条没有可抓取的文字，不编造措辞。
-(defun ze:trim-del (snap / n)
-  (setq n 0)
-  (foreach it snap
-    (if (and (ze:unlocked (car it)) (equal (cadr it) (ze:state (car it))))
-      (if (entdel (car it)) (setq n (1+ n)))))
+;; 单个选择（single = 拾取点）时拾取框里可能有好几根线，原生 TRIM 只剪其中一根 ——
+;; 不能把其余没变的也当成「剪不动」删掉（审查发现：在交点附近点一下，另一根整根消失）。
+;; 所以单选只在「框里所有曲线都没变」（这一下确实什么都没剪到）时，删离拾取点最近的那一根。
+(defun ze:trim-del (snap single / n changed near)
+  (setq n 0 changed nil)
+  (if single
+    (progn
+      (foreach it snap
+        (if (not (equal (cadr it) (ze:state (car it)))) (setq changed T)))
+      (if (and (not changed) (setq near (ze:nearest (mapcar 'car snap) single)))
+        (if (and (ze:unlocked near) (entdel near)) (setq n 1))))
+    (foreach it snap
+      (if (and (ze:unlocked (car it)) (equal (cadr it) (ze:state (car it))))
+        (if (entdel (car it)) (setq n (1+ n))))))
   n)
 
 (defun ze:union (a b / i n)
@@ -187,7 +221,7 @@
 
 (defun ze:win (p1 p2 / m)
   (setq m (if (< (car p1) (car p2)) "_W" "_C"))
-  (ssget m p1 p2))
+  (ssget m p1 p2 (ze:skip)))
 
 ;; ============================================================ 几何层：委托原生
 ;; bnd 为 nil 表示「全部对象作边界」。
@@ -195,8 +229,10 @@
 ;; 2026-09-21 在 ZWCAD 2020 上实测：传 "" 时 TRIM / EXTEND 会从头到尾走完、
 ;; 不报任何错、也不改图形（V1/V2/V3/V5 均无变化）；改成 (ssget "_X") 后
 ;; 栏选 / 窗交 / 修剪 / 延伸 四种组合全部生效（A1~A4）。
+;; 全部对象作边界时同样排除标注类（ze:skip）：否则悬停预览（不把标注当边界）
+;; 和实际结果（在尺寸线处断开）对不上。
 (defun ze:cmd (isExt bnd mode plist tail / lst p s)
-  (setq s (if bnd bnd (ssget "_X")))
+  (setq s (if bnd bnd (ssget "_X" (ze:skip))))
   (if (null s) (setq s ""))
   (setq lst (list (if isExt "_.EXTEND" "_.TRIM") s ""))
   (if mode (setq lst (append lst (list mode))))
@@ -214,8 +250,12 @@
   (setq snap (ze:snap cand))
   (vla-StartUndoMark doc) (setq ze:mark T)
   (ze:cmd isExt ze:bounds mode plist tail)
-  (if (not isExt) (ze:trim-del snap))
-  (vla-EndUndoMark doc) (setq ze:mark nil))
+  ;; 「删除无法修剪的对象」只属于快速模式；标准模式下 AutoCAD 不删（审查发现原来两种模式都删）。
+  ;; mode 为 nil = 单个选择，把拾取点传进去（见 ze:trim-del）。
+  (if (and (not isExt) (= (ze:mode) 1))
+    (ze:trim-del snap (if mode nil (car plist))))
+  (vla-EndUndoMark doc) (setq ze:mark nil)
+  (setq ze:ops (1+ ze:ops)))
 
 (defun ze:close-mark (/ doc)
   (if ze:mark
@@ -225,13 +265,12 @@
         (vl-catch-all-apply 'vla-EndUndoMark (list doc)))
       (setq ze:mark nil))))
 
-;; 一笔轨迹：单点＝单个选择（裸点，让拾取点自己决定剪哪端），多点＝栏选。
-(defun ze:stroke (isExt pts)
-  (if (= (length pts) 1)
-    (ze:apply isExt nil (list (car pts)) (list "") (ze:hit (car pts)))
-    (ze:apply isExt "_F" pts (list "" "") (ze:cand "_F" pts))))
-
-(defun ze:undo () (command "_.UNDO" 1))
+;; 放弃(U)：只撤本次命令里自己做的操作（ze:ops 计数），撤完就报无效选择，
+;; 不会一路撤到 TR 之前别的命令（审查发现原来只记「有没有操作过」，连按会撤过头）。
+(defun ze:undo ()
+  (if (> ze:ops 0)
+    (progn (command "_.UNDO" 1) (setq ze:ops (1- ze:ops)) T)
+    nil))
 
 ;; ============================================================ 选项处理
 (defun ze:opt-proj (/ s)
@@ -257,16 +296,20 @@
 
 ;; 删除：返回实际删掉的对象数。
 ;; 收尾提示「已删除 N 个对象。」未在实机日志里出现，属推断（规格书 3.4 待校准清单）。
-(defun ze:opt-del (isExt / p b ss i k n)
-  (setq n 0)
+;; 每点一下只删一个对象（离拾取点最近的曲线；框里没有曲线就删第一个），
+;; 原来是把拾取框里的所有对象一起删。每次删除单独成一个 UNDO 组，放弃(U) 能撤回。
+(defun ze:opt-del (isExt / p b ss e n doc)
+  (setq n 0 doc (vla-get-ActiveDocument (vlax-get-acad-object)))
   (while (setq p (getpoint "\n选择要删除的对象或 <退出>: "))
     (setq b (ze:box p) ss (ssget "_C" (car b) (cadr b)))
+    (vl-catch-all-apply 'sssetfirst (list nil nil))
     (if ss
       (progn
-        (setq i 0 k (sslength ss))
-        (while (< i k)
-          (if (entdel (ssname ss i)) (setq n (1+ n)))
-          (setq i (1+ i))))
+        (setq e (ze:nearest (ze:names ss) p))
+        (if (null e) (setq e (ssname ss 0)))
+        (vla-StartUndoMark doc) (setq ze:mark T)
+        (if (entdel e) (setq n (1+ n) ze:ops (1+ ze:ops)))
+        (vla-EndUndoMark doc) (setq ze:mark nil))
       (ze:bad isExt)))
   (if (> n 0) (princ (strcat "\n已删除 " (itoa n) " 个对象。")))
   n)
@@ -284,7 +327,8 @@
       ((equal p "O") (ze:opt-mode isExt))
       (T
         (setq b (ze:box p))
-        (setq ss (ze:union ss (ssget "_C" (car b) (cadr b))))
+        (setq ss (ze:union ss (ssget "_C" (car b) (cadr b) (ze:skip))))
+        (vl-catch-all-apply 'sssetfirst (list nil nil))
         (if (> (sslength ss) 0)
           (princ (strcat "\n找到 " (itoa (sslength ss)) " 个"))
           (progn
@@ -292,8 +336,10 @@
             (if p2
               (progn
                 (setq ss (ze:union ss (ze:win p p2)))
+                (vl-catch-all-apply 'sssetfirst (list nil nil))
                 (princ (strcat "\n找到 " (itoa (sslength ss)) " 个")))))))))
-  ss)
+  ;; 一个都没选到 = 回车「全部选择」（nil），不要返回空选择集
+  (if (and ss (> (sslength ss) 0)) ss nil))
 
 ;; 栏选：只在标准模式下是命令选项（实机确认快速模式没有它）。
 (defun ze:opt-fence (isExt / p pts go)
@@ -314,20 +360,22 @@
       (setq p2 (getpoint p1 "\n指定对角点: "))
       (if p2 (ze:apply isExt "_C" (list p1 p2) (list "") (ze:cand "_C" (list p1 p2)))))))
 
-;; 主提示的按键分发，返回更新后的「是否已有操作」。
-(defun ze:key (isExt u k / md)
+;; 主提示的按键分发。「是否已有可撤销操作」统一看 ze:ops（ze:apply / ze:opt-del 自己计数）。
+;; 剪切边(T)/边界边(B)：选完的结果必须存进 ze:bounds（原来被丢掉，这个选项等于没用）。
+(defun ze:key (isExt k / md)
   (setq md (ze:mode))
   (cond
-    ((and (not isExt) (equal k "T")) (ze:pickbounds isExt nil) (ze:bound-send) u)
-    ((and isExt (equal k "B")) (ze:pickbounds isExt nil) (ze:bound-send) u)
-    ((equal k "C") (ze:opt-cross isExt) T)
-    ((equal k "O") (ze:opt-mode isExt) u)
-    ((equal k "P") (ze:opt-proj) u)
-    ((equal k "E") (if (= md 0) (ze:opt-edge) (ze:bad isExt)) u)
-    ((equal k "F") (if (= md 0) (ze:opt-fence isExt) (ze:bad isExt)) u)
-    ((equal k "R") (if isExt (ze:bad isExt) (if (> (ze:opt-del isExt) 0) T u)))
-    ((equal k "U") (if u (ze:undo) (ze:bad isExt)) u)
-    (T (ze:bad isExt) u)))
+    ((or (and (not isExt) (equal k "T")) (and isExt (equal k "B")))
+      (setq ze:bounds (ze:pickbounds isExt nil))
+      (ze:bound-send))
+    ((equal k "C") (ze:opt-cross isExt))
+    ((equal k "O") (ze:opt-mode isExt))
+    ((equal k "P") (ze:opt-proj))
+    ((equal k "E") (if (= md 0) (ze:opt-edge) (ze:bad isExt)))
+    ((equal k "F") (if (= md 0) (ze:opt-fence isExt) (ze:bad isExt)))
+    ((equal k "R") (if isExt (ze:bad isExt) (ze:opt-del isExt)))
+    ((equal k "U") (if (not (ze:undo)) (ze:bad isExt)))
+    (T (ze:bad isExt))))
 
 ;; ============================================================ 鼠标捕捉（CAD 原生 grread）
 ;; 为什么不用自建消息循环：命令内部自己起循环时 CAD 根本不处理鼠标消息（2026-09-21 真机实测），
@@ -581,16 +629,16 @@
   (redraw))
 
 ;; ============================================================ 主循环
-(defun ze:loop (isExt / u pending res kind data pts act go)
-  (setq u nil pending nil go T)
+(defun ze:loop (isExt / pending res kind data pts act go hit)
+  (setq pending nil go T ze:ops 0)
   (ze:bound-send)          ;; 把边界集合告诉 DLL（悬停预览要算「会被剪掉的那一段」）
-  (princ (ze:prompt isExt u))
+  (princ (ze:prompt isExt nil))
   (while go
     (setq res (ze:capture) kind (car res) data (cadr res))
     (ze:dbg (strcat "loop kind=" kind " n=" (if (listp data) (vl-princ-to-string (length data)) (vl-princ-to-string data))))
     (cond
       ((equal kind "KEY")
-        (setq u (ze:key isExt u data)))
+        (ze:key isExt data))
       ((equal kind "STROKE")
         ;; data 已经是 UCS 点（grread 给的就是 UCS），不用再过 ze:wpts（那是比例坐标用的）。
         (setq pts data
@@ -598,28 +646,21 @@
         (cond
           (pending
             (setq pts (cons pending pts) pending nil)
-            (ze:apply act "_F" pts (list "" "") (ze:cand "_F" pts))
-            (setq u T))
+            (ze:apply act "_F" pts (list "" "") (ze:cand "_F" pts)))
           ((= (length pts) 1)
-            (if (ze:hit (car pts))
-              (progn (ze:apply act nil (list (car pts)) (list "") (ze:hit (car pts))) (setq u T))
+            (if (setq hit (ze:hit (car pts)))
+              (ze:apply act nil (list (car pts)) (list "") hit)
               (setq pending (car pts))))
-          (T (ze:apply act "_F" pts (list "" "") (ze:cand "_F" pts)) (setq u T))))
-      ((equal kind "EMPTY")
-        (princ "\n请单击对象，或按住左键划过对象。"))
-      ((equal kind "ERROR")
-        (princ "\n鼠标捕捉模块无响应，已停止。请确认 bin/ZWKit.Core.102.dll 已换成新版并重启 CAD。")
-        (setq go nil))
+          (T (ze:apply act "_F" pts (list "" "") (ze:cand "_F" pts)))))
       (T (setq go nil)))
     (if go
       (if pending
         (princ "\n指定下一个栏选点或拾取/拖动光标: ")
-        (princ (ze:prompt isExt u)))))
+        (princ (ze:prompt isExt (> ze:ops 0))))))
   (princ))
 
 (defun ze:run (isExt / *error* echo snap)
   (setq echo (getvar "CMDECHO") snap (getvar "OSMODE"))
-  (ze:cursor-on)
   (defun *error* (msg)
     (ze:dbg (strcat "ERROR " (vl-princ-to-string msg)))
     (ze:close-mark)
@@ -633,6 +674,9 @@
     ((not (ze:planar))
       (princ "\n本版支持模型空间的二维平面视图，请在当前 UCS 的俯视平面下使用。"))
     (T
+      ;; 光标只在真正进入交互时才缩小：放在检查之前的话，DLL 未就绪 / 非平面视图
+      ;; 两个分支直接返回，CURSORSIZE 会永久停在 1（它存注册表）。
+      (ze:cursor-on)
       (setq ze:bounds nil)
       (setvar "CMDECHO" 0) (setvar "OSMODE" 0)
       (if (= (ze:mode) 0)
@@ -643,7 +687,7 @@
   (princ))
 
 ;; ============================================================ 命令
-;; TR / EX 是完整复刻版；拖动版仍是 ZT / TRD / EXD（click.lsp 里保留下来的），
+;; TR / EX 是完整复刻版；拖动版仍是 ZT / TRD / EXD（trim.lsp / extend.lsp），
 ;; TRC / EXC 作为 TR / EX 的别名。
 (defun c:TR () (ze:run nil))
 (defun c:TRC () (ze:run nil))

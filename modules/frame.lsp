@@ -148,7 +148,7 @@
 (defun tk:rectc (p1 p2 col / old e)
   (setq old (getvar "CMDECHO"))
   (setvar "CMDECHO" 0)
-  (command "_.RECTANG" (tk:w2u p1) (tk:w2u p2))
+  (command "_.RECTANG" "_non" (tk:w2u p1) "_non" (tk:w2u p2))
   (setvar "CMDECHO" old)
   (setq e (entlast))
   (if (and e (= (cdr (assoc 0 (entget e))) "LWPOLYLINE")) (tk:mag e col))
@@ -159,7 +159,7 @@
 (defun tk:dot (p r / old e)
   (setq old (getvar "CMDECHO"))
   (setvar "CMDECHO" 0)
-  (command "_.CIRCLE" (tk:w2u p) r)
+  (command "_.CIRCLE" "_non" (tk:w2u p) r)
   (setvar "CMDECHO" old)
   (setq e (entlast))
   (if (and e (= (cdr (assoc 0 (entget e))) "CIRCLE")) (tk:mag e 6))
@@ -561,8 +561,11 @@
       (princ "\n      不留余量，零件贴边")
       nil)))
 
-(defun tk:confirm (u p / uw uh pw ph mode s kw txt v done best bi)
-  (setq uw (car u) uh (cadr u))
+;; 返回 (缩放系数 可用区信息)。可用区信息必须和算系数用的是同一块：
+;; 原来系数按挑出来的最合适候选 best 算，tk:apply 却按最大那块 u 摆放，
+;; 有遮挡物时两块不同，零件会压进标题栏（审查发现）。
+(defun tk:confirm (u p / uw uh pw ph mode s kw txt v done best bi ui w2 h2 bx by)
+  (setq uw (car u) uh (cadr u) ui u)
   (setq pw (car p) ph (cadr p))
   (setq mode "exact" done nil s nil)
   (setq txt (getstring (strcat "\n[5/5] 零件尺寸 <" (tk:num pw) " x " (tk:num ph)
@@ -581,7 +584,7 @@
   (if best
     (progn
       (setq bi (tk:boxinfo best))
-      (setq uw (car bi) uh (cadr bi))
+      (setq uw (car bi) uh (cadr bi) ui bi)
       (tk:erase-box)
       (tk:rectc (car best) (cadr best) 5)
       (princ (strcat "\n      已按零件尺寸从 " (itoa (length tk:cands))
@@ -615,36 +618,79 @@
       ((= kw "M") (tk:ask-margins))
       ((= kw "F")
        (princ "\n      强制填满：图框按 X / Y 分别缩放，四边零留白。")
-       (princ "\n      注意：图框上的文字、圆、箭头会被拉变形，执行后请检查。")
+       (princ "\n      注意：只支持由直线 / 直线多段线组成的图框；含圆、圆弧、文字、块时会提示失败并恢复原样。")
        (setq tk:fill T done T))
       (T (setq done T))))
-  s)
+  (list s ui))
 
 ;; ---------- 执行：缩放 + 按四边余量精确落位 ----------
 ;; 非等比缩放（强制填满）：用变换矩阵，任意对象类型都能做。
 ;; 等比缩放做不到「四边零留白」——图框和零件的长宽比不同，等比必然有一边留空。
-(defun tk:scale-xy (ss base sx sy / i ent obj mat tx ty r ok)
-  (setq tx (* (car base) (- 1.0 sx)) ty (* (cadr base) (- 1.0 sy)))
-  (setq mat (vlax-tmatrix
-              (list (list sx 0.0 0.0 0.0)
-                    (list 0.0 sy 0.0 0.0)
-                    (list 0.0 0.0 1.0 0.0)
-                    (list tx ty 0.0 1.0))))
-  (setq i 0 ok T)
-  (while (< i (sslength ss))
+;; 对象快照（复杂多段线连同顶点一起），用于失败时原样恢复。
+(defun tk:state (ent / data result sub item)
+  (if (setq data (entget ent))
+    (progn
+      (setq result (list data))
+      (cond
+        ((= (cdr (assoc 0 data)) "POLYLINE")
+          (setq sub (entnext ent))
+          (while (and sub (setq item (entget sub)) (/= (cdr (assoc 0 item)) "SEQEND"))
+            (setq result (cons item result) sub (entnext sub))))
+        ;; 块参照后面紧跟的属性也会跟着变换，一起存
+        ((= (cdr (assoc 0 data)) "INSERT")
+          (setq sub (entnext ent))
+          (while (and sub (setq item (entget sub)) (= (cdr (assoc 0 item)) "ATTRIB"))
+            (setq result (cons item result) sub (entnext sub)))))
+      (reverse result))))
+
+(defun tk:restore-states (snaps / s)
+  (foreach s snaps
+    (foreach d s (vl-catch-all-apply 'entmod (list d)))
+    (vl-catch-all-apply 'entupd (list (cdr (assoc -1 (car s)))))))
+
+;; 非等比缩放一个点（WCS）：以 base 为基点，X 乘 sx、Y 乘 sy
+(defun tk:xf (pt base sx sy)
+  (list (+ (car base) (* sx (- (car pt) (car base))))
+        (+ (cadr base) (* sy (- (cadr pt) (cadr base))))
+        (if (caddr pt) (caddr pt) 0.0)))
+
+;; 单个对象的非等比缩放。只支持直线和「全是直线段、在 WCS 平面上」的轻量多段线 ——
+;; 2026-09-22 真机实测：ZWCAD 2020 的 vla-TransformBy 遇到非等比矩阵直接忽略（连直线都不变），
+;; 而且不报错，所以不能用它；圆 / 圆弧 / 文字 / 块本来也没法非等比缩放。
+;; 返回 T = 改成功，nil = 不支持或写入失败。
+(defun tk:xf-ent (ent base sx sy / d typ new ok)
+  (setq d (entget ent) typ (cdr (assoc 0 d)))
+  (cond
+    ((= typ "LINE")
+      (setq new (subst (cons 10 (tk:xf (cdr (assoc 10 d)) base sx sy)) (assoc 10 d) d))
+      (setq new (subst (cons 11 (tk:xf (cdr (assoc 11 d)) base sx sy)) (assoc 11 new) new))
+      (if (entmod new) (progn (entupd ent) T)))
+    ((and (= typ "LWPOLYLINE")
+          (or (null (assoc 210 d)) (equal (cdr (assoc 210 d)) '(0.0 0.0 1.0) 1e-9))
+          (not (vl-some '(lambda (g) (and (= (car g) 42) (not (equal (cdr g) 0.0 1e-12)))) d)))
+      (setq new (mapcar '(lambda (g)
+                           (if (= (car g) 10)
+                             (cons 10 (list (car (tk:xf (cdr g) base sx sy)) (cadr (tk:xf (cdr g) base sx sy))))
+                             g))
+                        d))
+      (if (entmod new) (progn (entupd ent) T)))
+    (T nil)))
+
+;; 强制填满的非等比缩放。只要有一个对象不支持 / 写失败，就把已经改过的全部恢复原样并返回 nil，
+;; 调用方据此放弃后续移动，不留「一半缩放一半没动」的图。
+;; （旧版用 vlax-tmatrix + TransformBy：矩阵平移量还写错了行，且 ZWCAD 对非等比矩阵静默不执行 ——
+;;   结果是图框没缩放却照样被 MOVE 挪走。）
+(defun tk:scale-xy (ss base sx sy / i ent ok snaps)
+  (setq i 0 ok T snaps nil)
+  (while (and ok (< i (sslength ss)))
     (setq ent (ssname ss i))
-    ;; 转 VLA 对象也要包 catch-all：某个实体转不过去时不能中断整批，
-    ;; 否则图框会停在「一部分已变换、一部分没变」的不一致状态（1.2.28 加固）。
-    (setq obj (vl-catch-all-apply 'vlax-ename->vla-object (list ent)))
-    (if (vl-catch-all-error-p obj)
-      (setq ok nil)
-      (progn
-        (setq r (vl-catch-all-apply 'vla-transformby (list obj mat)))
-        (if (vl-catch-all-error-p r) (setq ok nil))))
+    (setq snaps (cons (tk:state ent) snaps))
+    (if (not (tk:xf-ent ent base sx sy)) (setq ok nil))
     (setq i (1+ i)))
+  (if (not ok) (tk:restore-states snaps))
   ok)
 
-(defun tk:apply (ss u p s / uw uh uctr pw ph pctr base uc2 uw2 uh2 sx sy plx pby tx ty delta old gx gy)
+(defun tk:apply (ss u p s / uw uh uctr pw ph pctr base uc2 uw2 uh2 sx sy plx pby tx ty delta old gx gy failed)
   (tk:erase-box)
   (setq uw (car u) uh (cadr u) uctr (caddr u))
   (setq pw (car p) ph (cadr p) pctr (caddr p))
@@ -659,11 +705,13 @@
           ;; 强制填满：可用区正好变成「零件 + 余量」，四边零留白
           (setq sx (/ (+ pw tk:mL tk:mR) uw) sy (/ (+ ph tk:mB tk:mT) uh))
           (if (not (tk:scale-xy ss base sx sy))
-            (princ "\n      警告：部分对象非等比缩放失败（可能是旋转过的块），位置可能不准。"))
+            (setq failed T))
           (setq uw2 (* uw sx) uh2 (* uh sy))
           (setq gx 0.0 gy 0.0))
         (progn
-          (command "_.SCALE" ss "" (tk:w2u base) s)
+          ;; 所有传给命令的点都加 "_non"：此时 OSMODE 已恢复成用户的捕捉设置，
+          ;; 不加的话基点 / 位移点会被吸到附近端点上，图框放歪（审查发现）。
+          (command "_.SCALE" ss "" "_non" (tk:w2u base) s)
           (setq uw2 (* s uw) uh2 (* s uh))
           ;; 余量之外还有富余空间（可用区和零件长宽比不同必然有），
           ;; 平分成两半放到对边，避免「一边贴死、另一边大量留白」
@@ -671,25 +719,33 @@
           (setq gy (/ (- uh2 ph tk:mB tk:mT) 2.0))
           (if (< gx 0.0) (setq gx 0.0))
           (if (< gy 0.0) (setq gy 0.0))))
-      ;; 以 base 为基点缩放，可用区中心不动
-      (setq uc2 base)
-      (if pctr
+      (if failed
         (progn
-          (setq plx (- (car pctr) (/ pw 2.0)) pby (- (cadr pctr) (/ ph 2.0)))
-          ;; 目标：可用区左边 = 零件左边 - 左余量 - 平分富余；下边同理
-          (setq tx (+ (- plx tk:mL gx) (/ uw2 2.0)))
-          (setq ty (+ (- pby tk:mB gy) (/ uh2 2.0)))
-          (setq delta (list (- tx (car uc2)) (- ty (cadr uc2)) 0.0))
-          (command "_.MOVE" ss "" (tk:w2u (list 0.0 0.0 0.0)) (tk:w2u delta))))
-      (setvar "CMDECHO" old)
-      (if tk:fill
-        (princ (strcat "\n      完成：图框已按 X " (tk:num sx) " / Y " (tk:num sy)
-                       " 非等比缩放填满零件（零件未动）。可 U 撤销。"))
-        (princ (strcat "\n      完成：图框缩放 " (tk:num s) " 倍，已按余量套到零件上（零件未动）。可 U 撤销。")))
-      T)))
+          (setvar "CMDECHO" old)
+          (princ "\n      强制填满失败：图框里有不支持非等比缩放的对象（圆 / 圆弧 / 文字 / 块等），")
+          (princ "\n      已全部恢复原样，未做任何移动。请重新运行 TK，不要选 F（用等比缩放）。")
+          nil)
+        (progn
+          ;; 以 base 为基点缩放，可用区中心不动
+          (setq uc2 base)
+          (if pctr
+            (progn
+              (setq plx (- (car pctr) (/ pw 2.0)) pby (- (cadr pctr) (/ ph 2.0)))
+              ;; 目标：可用区左边 = 零件左边 - 左余量 - 平分富余；下边同理
+              (setq tx (+ (- plx tk:mL gx) (/ uw2 2.0)))
+              (setq ty (+ (- pby tk:mB gy) (/ uh2 2.0)))
+              (setq delta (list (- tx (car uc2)) (- ty (cadr uc2)) 0.0))
+              (command "_.MOVE" ss "" "_non" (tk:w2u (list 0.0 0.0 0.0)) "_non" (tk:w2u delta))))
+          (setvar "CMDECHO" old)
+          (if tk:fill
+            (princ (strcat "\n      完成：图框已按 X " (tk:num sx) " / Y " (tk:num sy)
+                           " 非等比缩放填满零件（零件未动）。可 U 撤销。"))
+            (princ (strcat "\n      完成：图框缩放 " (tk:num s) " 倍，已按余量套到零件上（零件未动）。可 U 撤销。")))
+          T)))))
 
 ;; ---------- 主命令 ----------
-(defun tk:run (/ fr ss bb inner u p s)
+;; *error* 必须列在局部变量里：原来没列，跑过一次 TK 全局错误处理就被永久换成这个（审查发现）。
+(defun tk:run (/ *error* fr ss bb inner u p cf)
   (defun *error* (msg)
     (vl-catch-all-apply 'tk:erase-box nil)
     ;; 中途 Esc / 出错时把 OSMODE、CMDECHO 还原，否则会永久停在 0
@@ -713,8 +769,9 @@
            (setq p (tk:part))
            (tk:boxok u "可用区")
            (tk:boxok p "零件范围")
-           (setq s (tk:confirm u p)))
-    (tk:apply ss u p s)
+           (setq cf (tk:confirm u p)))
+    ;; 用 tk:confirm 挑出来的那块可用区摆放（与算缩放系数的是同一块）
+    (tk:apply ss (cadr cf) p (car cf))
     (progn (tk:erase-box) (princ "\n已取消，未做任何修改。")))
   (tk:restore-vars)
   (princ))

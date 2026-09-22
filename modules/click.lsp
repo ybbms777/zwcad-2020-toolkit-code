@@ -61,6 +61,7 @@
   (setvar "CMDECHO" echo) (setvar "OSMODE" snap)
   (princ))
 
+;; 下面的 TR/TRC/EX/EXC 只是兜底：trimext.lsp 最后加载，会把它们覆盖成 AutoCAD 复刻版。
 ;; 拖动版 TRD / EXD 现在由 trim.lsp / extend.lsp 用真 defun 定义（见那两处注释）。
 ;; 原来这里是 (setq c:TRD c:TR)，在 ZWCAD 上不生效：命令不会注册，敲 TRD 报未知命令。
 (defun c:TR () (click:trim))
@@ -68,5 +69,5 @@
 (defun c:EX () (click:extend))
 (defun c:EXC () (click:extend))
 
-(princ "\n点选式已加载：TR/TRC 修剪，EX/EXC 延伸，FE 栏选删除；ZT/TRD 拖动修剪，EXD 拖动延伸。")
+(princ "\nFE 栏选删除已加载。")
 (princ)

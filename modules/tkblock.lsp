@@ -74,27 +74,6 @@
     (setq tp (if e (cdr (assoc 0 (entget e))) nil)))
   (reverse out))
 
-;; ---------- 路径 2：全图找 ATTRIB，按「宿主块」匹配（330 组码）----------
-(defun tke:attrs-owner (ent / ss i e out tg tx own)
-  (setq out nil)
-  (setq ss (vl-catch-all-apply 'ssget (list "X" '((0 . "ATTRIB")))))
-  (if (vl-catch-all-error-p ss) (setq ss nil))
-  (if ss
-    (progn
-      (setq i 0)
-      (while (< i (sslength ss))
-        (setq e (ssname ss i))
-        (setq own (cdr (assoc 330 (entget e))))
-        (if (or (eq own ent) (equal own ent))
-          (progn
-            (setq tg (cdr (assoc 2 (entget e))))
-            (setq tx (cdr (assoc 1 (entget e))))
-            (if (null tg) (setq tg ""))
-            (if (null tx) (setq tx ""))
-            (setq out (cons (list tg tx e) out))))
-        (setq i (1+ i)))))
-  (reverse out))
-
 ;; ---------- 路径 3：ActiveX（备用，ZWCAD 上实测读不出来）----------
 (defun tke:attrs-vla (ent / obj arr out tag txt)
   (setq obj (vl-catch-all-apply 'vlax-ename->vla-object (list ent)))
@@ -121,22 +100,19 @@
                 (setq out (cons (list tag txt a) out)))
               (reverse out))))))))
 
-;; ---------- 读属性：三条路依次试，成功就记下来 ----------
+;; ---------- 读属性：两条路依次试，成功就记下来 ----------
 (defun tke:attrs (ent / L)
   (setq L (vl-catch-all-apply 'tke:attrs-dxf (list ent)))
   (if (vl-catch-all-error-p L) (setq L nil))
   (if L
     (progn (setq tke:how "DXF") L)
     (progn
-      (setq L (vl-catch-all-apply 'tke:attrs-owner (list ent)))
+      ;; 原来这里还有一条「全图 ssget ATTRIB 按宿主匹配」的路：ssget 选不到 ATTRIB 子实体，
+      ;; 永远是空的，已删除。
+      (setq L (vl-catch-all-apply 'tke:attrs-vla (list ent)))
       (if (vl-catch-all-error-p L) (setq L nil))
-      (if L
-        (progn (setq tke:how "全图匹配") L)
-        (progn
-          (setq L (vl-catch-all-apply 'tke:attrs-vla (list ent)))
-          (if (vl-catch-all-error-p L) (setq L nil))
-          (if L (setq tke:how "ActiveX"))
-          L)))))
+      (if L (setq tke:how "ActiveX"))
+      L)))
 
 ;; ---------- 读不出属性时，记一条原因 ----------
 (defun tke:why-str (ent / d e tp g66)
@@ -233,7 +209,8 @@
     (princ (strcat "（属性读法：" tke:how "）")))
   (if (= nattr 0)
     (progn
-      (princ "\n      提示：这 " (itoa nblk) " 个块都没读出属性。")
+      ;; princ 只收一个字符串：原来传了 3 个参数，这一行本身就报错，走不到下面的点选兜底（审查发现）
+      (princ (strcat "\n      提示：这 " (itoa nblk) " 个块都没读出属性。"))
       (if tke:why (princ (strcat "\n      " tke:why)))))
   (if (and (> nattr 0) (null hits) tags)
     (progn
@@ -314,6 +291,9 @@
           (setq r (if a
                     (vl-catch-all-apply 'entmod (list (subst (cons 1 val) a d)))
                     (vl-catch-all-apply 'entmod (list (append d (list (cons 1 val)))))))
+          ;; 改属性后刷新所属块参照的显示（属性是子实体，不刷新可能要 REGEN 才看得到新值）
+          (if (and (not (vl-catch-all-error-p r)) r (cdr (assoc 330 d)))
+            (vl-catch-all-apply 'entupd (list (cdr (assoc 330 d)))))
           (if (or (vl-catch-all-error-p r) (null r)) nil T))))))
 
 (defun tke:get1 (L role / r k)

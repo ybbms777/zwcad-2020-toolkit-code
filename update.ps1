@@ -129,7 +129,16 @@ Say ('        本地版本 : ' + $localVer) 'Gray'
 Say ('        云端版本 : ' + $manifest.version + '   (' + $manifest.date + ')') 'Gray'
 
 $want = @{}
-foreach ($p in $manifest.files.PSObject.Properties) { $want[$p.Name] = [string]$p.Value }
+foreach ($p in $manifest.files.PSObject.Properties) {
+    # 清单里的路径只允许是工具包目录内的相对路径：拒绝 ..、盘符、绝对路径，
+    # 防止被篡改的清单把文件写到工具包外面（比如 CAD 的启动脚本目录）。
+    $n = [string]$p.Name
+    if ($n -match '(^|[\\/])\.\.([\\/]|$)' -or $n -match ':' -or $n.StartsWith('/') -or $n.StartsWith('\')) {
+        Say ('        清单里有非法路径，已忽略：' + $n) 'Red'
+        continue
+    }
+    $want[$n] = [string]$p.Value
+}
 
 # ---------- 3. 比对 ----------
 Say '  [2/4] 比对文件...' 'Cyan'

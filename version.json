@@ -1,11 +1,10 @@
 {
-    "version":  "1.2.44",
-    "date":  "2026-09-22 09:12",
+    "version":  "1.2.45",
+    "date":  "2026-09-22 11:11",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "修复 TR/EX 误删对象（交点附近单击、窗交框到块、标准模式）修复 ZT/TRD 实为栏选删除、EXD 不延伸修复 TK 图框错位、强制填满无效打开图纸不再被标记为已修改；安装/字体安装问题修复",
-                  "修复 TR/EX 误删对象（交点附近单击、窗交框到块、标准模式）修复 ZT/TRD 实为栏选删除、EXD 不延伸修复 TK 图框错位、强制填满无效打开图纸不再被标记为已修改；安装/字体安装问题修复"
+                  "修复 TR/EX 中途关图后十字光标一直变成小方块"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
@@ -14,7 +13,7 @@
                   ".gitignore":  "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
                   "bin/ZWKit.Core.102.dll":  "c87a4aea0874ff5843ffe7071391dc768869797813b7f1e649f25f9c3306a516",
                   "boot.lsp":  "1950c479d8759fdbb51a2ba7b73885b2e675b5a48cc1474986276225e432116e",
-                  "CHANGELOG.md":  "c9d819244922065645cac0fcdbbfaac1babecc21e89a3576f9658c9c4284c1ed",
+                  "CHANGELOG.md":  "1847242e6db6ea885c0d200bcb9c8da0e6c457e986f5ec5c83b59c942bb3cae3",
                   "cli.ps1":  "3bf00055f0470cf687f9a26f02eadcce06fa73df0fcdec286b0f1469aa80aafe",
                   "install.ps1":  "f7903e2fe27a08b02f441ee182971e3a05d98168ef04a7ca25eec953451e7189",
                   "modules.lsp":  "b3afe3b60d90204db5f457b084e9ad4e01cba750d0cc513844db6d1d7bde5894",
@@ -29,7 +28,7 @@
                   "modules/tkblock.lsp":  "84631c3797dfa3ed83c749b27242b079785ad8b8966626d1d810e289c0e044ac",
                   "modules/tolerance.lsp":  "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
                   "modules/trim.lsp":  "0debeb757129b86b8d24542139bf4f8a54b14ee7a6786d344c56a3722e3109ca",
-                  "modules/trimext.lsp":  "dffad438d68416497ab17f754e7a790eeff5f01c7e0199ec1704a2ff84bfc303",
+                  "modules/trimext.lsp":  "28303aa554edfc4488eceef275cac7738e87e4656fecd79daacbc5b6f3bb360f",
                   "README.md":  "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
                   "src/Bridge.cs":  "2f34431a432026dee8b0c0bd1b4db4e9e81b707b819595949e39c8ecb6cf6375",
                   "src/build.ps1":  "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",

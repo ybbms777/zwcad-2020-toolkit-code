@@ -606,21 +606,68 @@
 ;; 触发范围与十字大小无关：光圈 = PICKBOX（见 ze:pick），方块画多大、触发就多大。
 ;; CURSORSIZE 是全局设置，退出时必须原样还原，所以挂在 ze:restore 上，
 ;; 正常结束和出错（*error*）两条路都会经过它；ZWCAD 不支持该变量就自动跳过。
+;;
+;; 2026-09-22 真机复现的漏洞：TR 运行中直接关掉 / 切走这张图，这张图的 LISP 被整个丢弃，
+;; *error* 根本不会执行 —— CURSORSIZE 是全局设置，于是一直停在 1（别的图也是 1）。
+;; 更糟的是下次再进 TR 会把「1」当成原值存下来，退出时「还原」成 1，从此回不去。
+;; 所以现在：
+;;   1) 原值另存一份到 ZWK_CURSOR_ORIG（注册表环境变量，跨图纸、跨重启）；进 TR 时如果
+;;      当前已经是 1，就用存下的原值，不再把 1 当原值；
+;;   2) 用黑板变量 zwk:trdoc（所有图纸共享）记「哪张图正在跑 TR」，退出时清掉；
+;;   3) ze:cursor-heal：光标是 1、有原值、且当前图纸没在跑 TR 时自动还原 ——
+;;      每张图加载本文件时调一次，另挂命令反应器：任何命令开始时都检查一次。
 (setq ze:cur nil)
 
-(defun ze:cursor-on (/ v)
+(defun ze:cursor-orig (/ s n)
+  (setq s (vl-catch-all-apply 'getenv (list "ZWK_CURSOR_ORIG")))
+  (if (and (not (vl-catch-all-error-p s)) (= (type s) 'STR)) (setq n (atoi s)))
+  (if (and n (> n 1) (<= n 100)) n nil))
+
+(defun ze:cursor-on (/ v o)
   (setq v (vl-catch-all-apply 'getvar (list "CURSORSIZE")))
   (if (vl-catch-all-error-p v)
     nil
     (progn
+      (setq o (ze:cursor-orig))
+      (cond
+        ((and (numberp v) (> v 1))
+          (vl-catch-all-apply 'setenv (list "ZWK_CURSOR_ORIG" (itoa (fix v)))))
+        (o (setq v o)))                 ;; 已经是 1：上次没还原，用存下的原值
       (setq ze:cur v)
+      (vl-catch-all-apply 'vl-bb-set (list 'zwk:trdoc (getvar "DWGNAME")))
       (vl-catch-all-apply 'setvar (list "CURSORSIZE" 1)))))
 
 (defun ze:cursor-off ()
   (if ze:cur
     (progn
       (vl-catch-all-apply 'setvar (list "CURSORSIZE" (fix ze:cur)))
-      (setq ze:cur nil))))
+      (setq ze:cur nil)))
+  (vl-catch-all-apply 'vl-bb-set (list 'zwk:trdoc nil)))
+
+;; 光标卡在 1、而当前图纸并没有在跑 TR / EX 时，还原成存下的原值。
+;; force = T：调用方已确定本图的 TR 不在运行（例如本图开始了别的命令），
+;; 把残留的 ze:cur / 黑板标记一并清掉（收尾被打断时会残留）。
+(defun ze:cursor-heal (force / o t1 busy)
+  (if force
+    (progn
+      (setq ze:cur nil)
+      (if (equal (vl-catch-all-apply 'vl-bb-ref (list 'zwk:trdoc)) (getvar "DWGNAME"))
+        (vl-catch-all-apply 'vl-bb-set (list 'zwk:trdoc nil)))))
+  (setq o (ze:cursor-orig)
+        t1 (vl-catch-all-apply 'vl-bb-ref (list 'zwk:trdoc)))
+  (if (vl-catch-all-error-p t1) (setq t1 nil))
+  ;; 本图正在跑 TR（ze:cur 有值且黑板记的就是本图）时不动它
+  (setq busy (and ze:cur t1 (= t1 (getvar "DWGNAME"))))
+  (if (and o (not busy) (equal (getvar "CURSORSIZE") 1))
+    (vl-catch-all-apply 'setvar (list "CURSORSIZE" o)))
+  (princ))
+
+;; 命令反应器回调：本图开始了 TRIM / EXTEND / UNDO 以外的命令 = 本图的 TR 肯定不在运行
+;; （TR 运行期间只会自己调这三个命令），可以强制自检。
+(defun ze:cmd-react (reactor args / c)
+  (setq c (strcase (if (car args) (car args) "")))
+  (if (not (member c '("TRIM" "EXTEND" "UNDO" "U")))
+    (vl-catch-all-apply 'ze:cursor-heal (list T))))
 
 (defun ze:restore (echo snap)
   (ze:cursor-off)
@@ -662,6 +709,8 @@
 (defun ze:run (isExt / *error* echo snap)
   (setq echo (getvar "CMDECHO") snap (getvar "OSMODE"))
   (defun *error* (msg)
+    ;; 光标第一个还原：后面的步骤可能被再一次取消打断（工具栏按钮宏自带 ^C^C）
+    (ze:cursor-off)
     (ze:dbg (strcat "ERROR " (vl-princ-to-string msg)))
     (ze:close-mark)
     (ze:restore echo snap)
@@ -693,5 +742,17 @@
 (defun c:TRC () (ze:run nil))
 (defun c:EX () (ze:run T))
 (defun c:EXC () (ze:run T))
+;; 光标自愈：本图加载时先检查一次（上一张图 TR 中途被关时，光标会停在 1），
+;; 再挂命令反应器。重复加载本文件时先摘掉旧的反应器，避免叠加。
+(if (and (not (ze:cursor-orig)) (numberp (getvar "CURSORSIZE")) (> (getvar "CURSORSIZE") 1))
+  (vl-catch-all-apply 'setenv (list "ZWK_CURSOR_ORIG" (itoa (getvar "CURSORSIZE")))))
+(vl-catch-all-apply 'ze:cursor-heal (list nil))
+(if (and ze:react (= (type ze:react) 'VLR-Command-Reactor))
+  (vl-catch-all-apply 'vlr-remove (list ze:react)))
+(setq ze:react
+  (vl-catch-all-apply 'vlr-command-reactor
+    (list nil '((:vlr-commandWillStart . ze:cmd-react)))))
+(if (vl-catch-all-error-p ze:react) (setq ze:react nil))
+
 (princ "\nTR / EX 已按 AutoCAD 2025 复刻：提示与选项逐字一致，按 TRIMEXTENDMODE 决定快速或标准模式。")
 (princ)

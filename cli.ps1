@@ -109,7 +109,9 @@ function Invoke-KitInstall([string]$Mode,[string]$Selection,[int]$DurationMs) {
         $stage=Pad-Visual (Get-StageText $percent) 22
         Write-Host ("`r  $stage [$bar] $percent%   ") -NoNewline -ForegroundColor Cyan
         Start-Sleep -Milliseconds 80
-    } while(-not $process.HasExited -or $timer.ElapsedMilliseconds -lt $duration)
+    # 进度条只用来表示「还在跑」：安装脚本一结束就收尾，不再为了凑时长干等
+    # （原来强制等满 2.5~30 秒，全选 9 个模块要白等约 30 秒）。
+    } while(-not $process.HasExited)
     $process.WaitForExit()
     $ok=$process.ExitCode -eq 0
     if($ok){Write-Host ("`r  "+(Pad-Visual '安装完成' 22)+" [====================] 100%   ") -ForegroundColor Green}
@@ -135,7 +137,8 @@ function Select-KitFonts {
         $sel=Read-Host "`n输入编号（逗号分隔）"
         if($sel -eq '0'){return @()}
         if($sel -match '^\s*[Aa]\s*$'){return @($fonts | ForEach-Object {$_.Name})}
-        $valid=$sel -match '^\s*[1-9](\s*[,，]\s*[1-9])*\s*$'
+        # 字体有二十多个，编号必须支持两位数（原来只认 1-9，10 号以后没法单选）
+        $valid=$sel -match '^\s*\d{1,3}(\s*[,，]\s*\d{1,3})*\s*$'
         if($valid){
             $idx=@($sel -split '[,，]' | ForEach-Object {[int]$_.Trim()} | Where-Object {$_ -ge 1 -and $_ -le $fonts.Count} | Select-Object -Unique)
             if($idx.Count){return @($idx | ForEach-Object {$fonts[$_-1].Name})}
@@ -156,9 +159,9 @@ function Show-Menu {
     Write-Host '    [1] 智能标注        ' -NoNewline -ForegroundColor Yellow
     Write-Host 'ZD 系列，点选标注点/对象，仿 AutoCAD 快速标尺寸' -ForegroundColor Gray
     Write-Host '    [2] 快速修剪        ' -NoNewline -ForegroundColor Yellow
-    Write-Host 'TR / 拖动修剪，划过多余线段松开即剪' -ForegroundColor Gray
+    Write-Host 'ZT / TRD 拖动修剪，划过多余线段松开即剪' -ForegroundColor Gray
     Write-Host '    [3] 快速延伸        ' -NoNewline -ForegroundColor Yellow
-    Write-Host 'EX / Shift 拖动修剪，延伸与修剪一键切换' -ForegroundColor Gray
+    Write-Host 'EXD 拖动延伸，按住 Shift 切换为修剪' -ForegroundColor Gray
     Write-Host '    [4] 几何公差        ' -NoNewline -ForegroundColor Yellow
     Write-Host 'GC，调用原生公差对话框快速放置' -ForegroundColor Gray
     Write-Host ''
@@ -183,7 +186,7 @@ function Show-Menu {
     Write-Host '    [0] 退出' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '   可多选，用逗号分隔，例如 1,2,5 或 10,11；本次选择替换上次选择。' -ForegroundColor DarkGray
-    Write-Host '   点选式 TR/EX/栏选删除(FE) 已内置于基础组件，无需单独选择；1-10 都含自动加载和平滑度 20000。' -ForegroundColor DarkGray
+    Write-Host '   TR / EX（按 AutoCAD 2025 复刻）和栏选删除 FE 已内置于基础组件，无需单独选择；1-10 都含自动加载和平滑度 20000。' -ForegroundColor DarkGray
 }
 if(-not $Choice){
     Show-Menu

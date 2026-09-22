@@ -19,9 +19,14 @@ function Install-KitFonts([string]$Only) {
     if($Only){
         $names=@($Only.Split(',') | ForEach-Object {$_.Trim()})
         $files=@($files | Where-Object {$names -contains $_.Name})
-        if(-not $files.Count){WriteLog '所选字体未在 fonts 文件夹中找到。';return}
+        if(-not $files.Count){WriteLog '所选字体未在 fonts 文件夹中找到。';$script:fontFails=1;return}
     }
-    if(-not $files.Count){return}
+    if(-not $files.Count){$script:fontFails=0;return}
+    # 写 C:\Windows\Fonts 和 HKLM 需要管理员权限；不是管理员时每个字体都会失败，
+    # 必须把失败数报回去，不能让调用方显示「字体已安装」（审查发现原来退出码恒为 0）。
+    $isAdmin=([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if(-not $isAdmin){WriteLog '提示：当前不是管理员，TrueType 字体无法写入系统字体目录。请右键「一键安装.cmd」→「以管理员身份运行」再装字体。'}
+    $fails=0
     $sysFonts=Join-Path $env:WINDIR 'Fonts'
     $cadFonts=$null
     if(Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'ZWSOFT\ZWCAD 2020\Fonts')){$cadFonts=Join-Path $env:ProgramFiles 'ZWSOFT\ZWCAD 2020\Fonts'}
@@ -33,7 +38,7 @@ function Install-KitFonts([string]$Only) {
     foreach($f in $files) {
         try {
             if($f.Extension -eq '.shx') {
-                if(-not $cadFonts -or -not(Test-Path -LiteralPath $cadFonts)){WriteLog ('未找到 ZWCAD 字体目录，跳过 SHX：'+$f.Name);continue}
+                if(-not $cadFonts -or -not(Test-Path -LiteralPath $cadFonts)){WriteLog ('未找到 ZWCAD 字体目录，跳过 SHX：'+$f.Name);$fails++;continue}
                 Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $cadFonts $f.Name) -Force
                 WriteLog ('已复制 SHX 字体到 ZWCAD：'+$f.Name)
             } else {
@@ -45,10 +50,12 @@ function Install-KitFonts([string]$Only) {
             }
         } catch {
             WriteLog ('字体处理失败：'+$f.Name+'；'+$_.Exception.Message)
+            $fails++
         }
     }
     if($files | Where-Object {$_.Name -match '^STXIHEI'}){Set-KitFontMap}
-    WriteLog ('字体处理完成，共 ' + $files.Count + ' 个文件。')
+    WriteLog ('字体处理完成，共 ' + $files.Count + ' 个文件，失败 ' + $fails + ' 个。')
+    $script:fontFails=$fails
 }
 function Set-KitFontMap {
     $lines=@('STXIHEI;simhei.ttf','STXIHEI.TTF;simhei.ttf')
@@ -74,7 +81,12 @@ function Set-KitFontMap {
 }
 try {
     if($Mode -eq 'Fonts') {
+        $script:fontFails=0
         Install-KitFonts $Selection
+        if($script:fontFails -gt 0){
+            if(-not $NoUI){Add-Type -AssemblyName System.Windows.Forms;[Windows.Forms.MessageBox]::Show(('有 '+$script:fontFails+' 个字体没装上（多半是没用管理员身份运行），详情见 install.log。'),'中望工具包：未完成') | Out-Null}
+            exit 1
+        }
         if(-not $NoUI){Add-Type -AssemblyName System.Windows.Forms;[Windows.Forms.MessageBox]::Show('字体处理完成，详情见 install.log。重启 CAD 后生效。','中望工具包') | Out-Null}
         exit 0
     }
@@ -92,9 +104,11 @@ try {
     try { $cad=[Runtime.InteropServices.Marshal]::GetActiveObject('ZWCAD.Application'); $doc=$cad.ActiveDocument } catch {}
     if($cad -and -not ([string]$cad.Version).StartsWith('2020')) {throw '本工具包仅适用于中望 CAD 2020。'}
     if($Mode -eq 'Uninstall') {
+        # 钩子不管有没有 install-state.json 都要去掉：原来只在状态文件存在时才去，
+        # 状态文件丢了（换过包、删过）就什么都没做却记录「已移除」（审查发现）。
+        if(Test-Path -LiteralPath $hookPath){$text=[IO.File]::ReadAllText($hookPath,$enc); [IO.File]::WriteAllText($hookPath,(StripHook $text),$enc)}
         if(Test-Path -LiteralPath $statePath) {
             $state=Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-            if(Test-Path -LiteralPath $hookPath){$text=[IO.File]::ReadAllText($hookPath,$enc); [IO.File]::WriteAllText($hookPath,(StripHook $text),$enc)}
             if($null -ne $state.oldAcadLspAsDoc) {
                 if($doc){$doc.SetVariable('ACADLSPASDOC',[int]$state.oldAcadLspAsDoc)}
                 elseif($state.configKey -and (Test-Path -LiteralPath $state.configKey)){Set-ItemProperty -LiteralPath $state.configKey -Name ACADLSPASDOC -Value ([int]$state.oldAcadLspAsDoc)}
@@ -109,7 +123,10 @@ try {
             if(-not(Test-Path -LiteralPath $statePath)) {
                 $key='HKCU:\Software\ZWSOFT\ZWCAD\2020\zh-CN\Profiles\Default\Config'
                 if($doc){$profile=[string]$doc.GetVariable('CPROFILE');$key='HKCU:\Software\ZWSOFT\ZWCAD\2020\zh-CN\Profiles\'+$profile+'\Config'}
-                $prior=(Get-ItemProperty -LiteralPath $key -Name ACADLSPASDOC).ACADLSPASDOC
+                # 全新配置里可能还没有这个值（或整个键都没有）；Stop 模式下直接读会抛异常、整个安装失败。
+                # 读不到就记 $null，卸载时跳过还原。
+                $prior=$null
+                try { $prior=(Get-ItemProperty -LiteralPath $key -Name ACADLSPASDOC -ErrorAction Stop).ACADLSPASDOC } catch {}
                 if($old){[IO.File]::WriteAllText((Join-Path $kitRoot 'zwcad.lsp.before-install.bak'),$old,$enc)}
                 @{oldAcadLspAsDoc=$prior;configKey=$key;hook=$hookPath;installedAt=(Get-Date -Format s)} | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
             }
@@ -117,7 +134,9 @@ try {
             $hook=";; ZWKIT BEGIN`r`n(setq zwk:root "+(LispString $kitRoot)+")`r`n"+'(load (strcat zwk:root "/boot.lsp") nil)'+"`r`n;; ZWKIT END`r`n"
             [IO.File]::WriteAllText($hookPath,((StripHook $old).TrimEnd()+"`r`n"+$hook),$enc)
             if($doc -and [int]$doc.GetVariable('CMDACTIVE') -eq 0){$doc.SetVariable('ACADLSPASDOC',1)}
-            Set-ItemProperty -LiteralPath $state.configKey -Name ACADLSPASDOC -Value 1
+            # 键不存在时写不进去也不算失败：boot.lsp 启动时自己会 (setvar "ACADLSPASDOC" 1)
+            try { Set-ItemProperty -LiteralPath $state.configKey -Name ACADLSPASDOC -Value 1 -ErrorAction Stop }
+            catch { WriteLog ('注册表写 ACADLSPASDOC 失败（不影响使用，CAD 里会自动补上）：'+$_.Exception.Message) }
             WriteLog '自动加载入口已安装。每次启动或打开图纸将加载工具包并设置平滑度 20000。'
             Install-KitFonts
         }

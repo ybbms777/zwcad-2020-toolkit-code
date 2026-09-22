@@ -1,7 +1,7 @@
 ;;; BZ / BZD: change a DIMENSION's own line color, extension-line color,
 ;;; arrow size, and lineweight -- never touches the dimension TEXT (that's
-;;; ZF/ZFD's job, in font.lsp). Reuses the zf20:* xdata helpers there, so
-;;; font.lsp must be loaded first (see modules.lsp order).
+;;; ZF/ZFD's job, in font.lsp). Reuses the zf20:* xdata helpers in dimcore.lsp,
+;;; which is always loaded before this file (see modules.lsp order).
 ;;; Defaults: color=green(3), arrow size=1.8, lineweight=0.05mm.
 ;;; Distribution file is GBK encoded.
 (vl-load-com)
@@ -26,6 +26,14 @@
           (progn (setq v nil) (princ "\n请输入 1-4，或一个大于 0 的数字。"))))))
   v)
 
+;; 线宽只能取 CAD 的标准值（0.01mm 为单位）；自定义输入吸附到最近的标准值，
+;; 否则像 0.1mm -> 10 这种非法值会写进标注覆盖里（审查发现）。
+(defun zl20:snap-lw (v / best bd d)
+  (foreach x '(0 5 9 13 15 18 20 25 30 35 40 50 53 60 70 80 90 100 106 120 140 158 200 211)
+    (setq d (abs (- x v)))
+    (if (or (null bd) (< d bd)) (setq bd d best x)))
+  best)
+
 ;; internal unit: hundredths of a millimeter (DXF group 370 convention)
 (defun zl20:ask-lw (dflt / s v mm)
   (if (null dflt) (setq dflt 5))
@@ -42,12 +50,12 @@
       ((= s "6")
         (setq mm (getreal "\n输入线宽(毫米) <0.05>: "))
         (if (null mm) (setq mm 0.05))
-        (setq v (fix (+ 0.5 (* mm 100.0)))))
+        (setq v (zl20:snap-lw (fix (+ 0.5 (* mm 100.0))))))
       (T
         (setq mm (atof s))
         (if (<= mm 0.0)
           (princ "\n请输入 1-6，或一个大于 0 的毫米数。")
-          (setq v (fix (+ 0.5 (* mm 100.0))))))))
+          (setq v (zl20:snap-lw (fix (+ 0.5 (* mm 100.0)))))))))
   v)
 
 ;; DIMCLRD(176)+DIMCLRE(177) override: dim line + ext line color (arrows

@@ -186,7 +186,7 @@ function Show-Menu {
     Write-Host '    [0] 退出' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '   可多选，用逗号分隔，例如 1,2,5 或 10,11；本次选择替换上次选择。' -ForegroundColor DarkGray
-    Write-Host '   TR / EX（按 AutoCAD 2025 复刻）和栏选删除 FE 已内置于基础组件，无需单独选择；1-10 都含自动加载和平滑度 20000。' -ForegroundColor DarkGray
+    Write-Host '   TR / EX（按 AutoCAD 2025 复刻）和栏选删除 FE 已内置于基础组件，无需单独选择；1-10 都含自动加载和平滑度 10000。' -ForegroundColor DarkGray
 }
 if(-not $Choice){
     Show-Menu

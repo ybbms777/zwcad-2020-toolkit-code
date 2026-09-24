@@ -137,7 +137,7 @@ try {
             # 键不存在时写不进去也不算失败：boot.lsp 启动时自己会 (setvar "ACADLSPASDOC" 1)
             try { Set-ItemProperty -LiteralPath $state.configKey -Name ACADLSPASDOC -Value 1 -ErrorAction Stop }
             catch { WriteLog ('注册表写 ACADLSPASDOC 失败（不影响使用，CAD 里会自动补上）：'+$_.Exception.Message) }
-            WriteLog '自动加载入口已安装。每次启动或打开图纸将加载工具包并设置平滑度 20000。'
+            WriteLog '自动加载入口已安装。每次启动或打开图纸将加载工具包并设置平滑度 10000。'
             Install-KitFonts
         }
         if(-not $doc) {
@@ -154,7 +154,7 @@ try {
                 SendCad ('(progn (setq zwk:root '+(LispString $kitRoot)+') (load (strcat zwk:root "/boot.lsp")))')
                 Start-Sleep -Milliseconds 400
             }
-            $check='(progn (setq zwk:f (open '+(LispString $resultPath)+' "w")) (write-line (if (and (zwk:ready) (= (zwk:smooth-value) 20000) (zwk:selection-ok)) "OK" "FAILED") zwk:f) (close zwk:f))'
+            $check='(progn (setq zwk:f (open '+(LispString $resultPath)+' "w")) (write-line (if (and (zwk:ready) (= (zwk:smooth-value) 10000) (zwk:selection-ok)) "OK" "FAILED") zwk:f) (close zwk:f))'
             SendCad $check
             $until=(Get-Date).AddSeconds(12)
             $answer=''
@@ -165,7 +165,7 @@ try {
             } while((Get-Date) -lt $until)
             if($answer -notmatch '\S'){throw '未收到完整 CAD 自检结果。若当前会话加载过旧版 DLL，请保存图纸并重启 CAD，再运行 Verify 或 ZWKCHECK。自动加载设置已保留；本次不能视为加载成功。'}
             if($answer -notmatch '^\s*OK\s*$'){throw '自检未通过：模块、命令或平滑度有一项未就绪。'}
-            WriteLog '自检通过：所选模块、公共组件和平滑度 20000 已就绪。'
+            WriteLog '自检通过：所选模块、公共组件和平滑度 10000 已就绪。'
         }
     }
     if(-not $NoUI){Add-Type -AssemblyName System.Windows.Forms;[Windows.Forms.MessageBox]::Show('操作完成。详细结果见 install.log。','中望工具包') | Out-Null}

@@ -1,12 +1,13 @@
 {
-    "version":  "1.2.46",
-    "date":  "2026-09-23 08:25",
+    "version":  "1.2.47",
+    "date":  "2026-09-24 15:57",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "TR/EX 栏选改为点两下即执行，与 AutoCAD 一致",
-                  "修剪变暗预览、栏选虚线、红叉改由 CAD 绘制，缩放平移不再有残影",
-                  "栏选拉线更流畅，主线程延迟由最高 60 毫秒降到 26 毫秒"
+                  "TR/EX 选项字母改为回车确认，U 回车撤一步不再退出命令",
+                  "退出 TR/EX 后按一次 Ctrl+Z 撤掉整条命令",
+                  "修复按住 Shift 单击延伸无效，之后删除、移动也跟着失效的问题",
+                  "修复首尾相接的短线点了剪不掉，现在和 AutoCAD 一样整段删除"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
@@ -15,7 +16,7 @@
                   ".gitignore":  "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
                   "bin/ZWKit.Core.102.dll":  "0cbace529ce157889e236acc1320fab6e0e07ca2726925e46230ff363c21c21d",
                   "boot.lsp":  "1950c479d8759fdbb51a2ba7b73885b2e675b5a48cc1474986276225e432116e",
-                  "CHANGELOG.md":  "daebe72823cca075fe8127f5276035ef7b51add1cae6a1d446140996ca1533b7",
+                  "CHANGELOG.md":  "be6e73b24a500a989d551fe7c91f4704ddc826e1beac47f36451b9d3d6bf5bb0",
                   "cli.ps1":  "3bf00055f0470cf687f9a26f02eadcce06fa73df0fcdec286b0f1469aa80aafe",
                   "install.ps1":  "f7903e2fe27a08b02f441ee182971e3a05d98168ef04a7ca25eec953451e7189",
                   "modules.lsp":  "b3afe3b60d90204db5f457b084e9ad4e01cba750d0cc513844db6d1d7bde5894",
@@ -30,7 +31,7 @@
                   "modules/tkblock.lsp":  "84631c3797dfa3ed83c749b27242b079785ad8b8966626d1d810e289c0e044ac",
                   "modules/tolerance.lsp":  "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
                   "modules/trim.lsp":  "0debeb757129b86b8d24542139bf4f8a54b14ee7a6786d344c56a3722e3109ca",
-                  "modules/trimext.lsp":  "02ca01b3cdac3efa57ea171c1ef95fda42a97757e39b745582f615f1b998cc9d",
+                  "modules/trimext.lsp":  "b1e8c88d79970d85f47162d28e6e3a879601b982598ddd45346eb47700b9d3b5",
                   "README.md":  "5c5d4c536adcceeac21b437da7ec596efa18af0cd2c5e9eab4d6315af846441e",
                   "src/Bridge.cs":  "2f34431a432026dee8b0c0bd1b4db4e9e81b707b819595949e39c8ecb6cf6375",
                   "src/build.ps1":  "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
@@ -38,7 +39,7 @@
                   "update.ps1":  "651a2f4cea5f49459a2c666ca556b9d3a6c7cc622978f8b72ee967b7efd8dad3",
                   "更新.cmd":  "23afc10a38b73c7326b5d4bcd8c2bdb4b2feac25a287981947cdaa12de00d75a",
                   "取消自动加载.cmd":  "eea93443e0de7a8da02e859cc2759c68452881689363ae1a77844fd9d5403634",
-                  "使用说明.md":  "2f771dfeb5adc62bf1a16c850a08d6c6051233674fe3f076f208d76218798d11",
+                  "使用说明.md":  "9773507a3e608f189c77d3b284810d33f4973927c8def179c6762445762cbfcc",
                   "一键安装.cmd":  "8eea6e887e556507cf0c4538cccb2d27c86aa68a92cb3eadf8453847fe9905b8"
               }
 }

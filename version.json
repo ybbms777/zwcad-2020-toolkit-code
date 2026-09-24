@@ -1,13 +1,10 @@
 {
-    "version":  "1.2.47",
-    "date":  "2026-09-24 15:57",
+    "version":  "1.2.48",
+    "date":  "2026-09-24 16:15",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "TR/EX 选项字母改为回车确认，U 回车撤一步不再退出命令",
-                  "退出 TR/EX 后按一次 Ctrl+Z 撤掉整条命令",
-                  "修复按住 Shift 单击延伸无效，之后删除、移动也跟着失效的问题",
-                  "修复首尾相接的短线点了剪不掉，现在和 AutoCAD 一样整段删除"
+                  "圆弧平滑度由 20000 降到 10000，减轻大图缩放和平移的开销"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
@@ -15,10 +12,10 @@
                   ".gitattributes":  "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
                   ".gitignore":  "aaa828de103c45fbad97b782ddac34f08421a25fcf2ad44c07e87ed31db8d14f",
                   "bin/ZWKit.Core.102.dll":  "0cbace529ce157889e236acc1320fab6e0e07ca2726925e46230ff363c21c21d",
-                  "boot.lsp":  "1950c479d8759fdbb51a2ba7b73885b2e675b5a48cc1474986276225e432116e",
-                  "CHANGELOG.md":  "be6e73b24a500a989d551fe7c91f4704ddc826e1beac47f36451b9d3d6bf5bb0",
-                  "cli.ps1":  "3bf00055f0470cf687f9a26f02eadcce06fa73df0fcdec286b0f1469aa80aafe",
-                  "install.ps1":  "f7903e2fe27a08b02f441ee182971e3a05d98168ef04a7ca25eec953451e7189",
+                  "boot.lsp":  "bcbbff0c062012aaf435314b60ff7601c0d52d926d1857a701050e2dbab2d712",
+                  "CHANGELOG.md":  "bfe463390f2659b9a02888dcc556267c712aa7eb35de16fab58b314d9f9956d3",
+                  "cli.ps1":  "a44674fca81e7852e2ef4c894278abc48dde72767d6a8d35bd55df990f566744",
+                  "install.ps1":  "fe15f5faac6f42f6c19291afffe59af31b60efb26ee494d69d2ccf1e00b7e738",
                   "modules.lsp":  "b3afe3b60d90204db5f457b084e9ad4e01cba750d0cc513844db6d1d7bde5894",
                   "modules/click.lsp":  "fd660e6ea9740e64d2f368ef1955aa610d5fd82719306bac8c0b5aea0f4803be",
                   "modules/dimcore.lsp":  "4496a20d00702132be373ee2fbbf0c9c6bdec439d2a00a27522c3abcc47659d8",
@@ -39,7 +36,7 @@
                   "update.ps1":  "651a2f4cea5f49459a2c666ca556b9d3a6c7cc622978f8b72ee967b7efd8dad3",
                   "更新.cmd":  "23afc10a38b73c7326b5d4bcd8c2bdb4b2feac25a287981947cdaa12de00d75a",
                   "取消自动加载.cmd":  "eea93443e0de7a8da02e859cc2759c68452881689363ae1a77844fd9d5403634",
-                  "使用说明.md":  "9773507a3e608f189c77d3b284810d33f4973927c8def179c6762445762cbfcc",
+                  "使用说明.md":  "320b4ffe04a3e4ff01b6b3b51611f4a017d948320bf356e9c11ef50f984eec50",
                   "一键安装.cmd":  "8eea6e887e556507cf0c4538cccb2d27c86aa68a92cb3eadf8453847fe9905b8"
               }
 }

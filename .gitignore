@@ -11,3 +11,6 @@ desktop.ini
 # 更新器产生的备份与临时文件
 _backup/
 *.new
+
+# 模块改名等手工备份，不提交
+_backup*/

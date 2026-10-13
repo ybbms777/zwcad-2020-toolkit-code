@@ -194,19 +194,21 @@ foreach ($rel in $changed) {
         continue
     }
 
-    # 备份旧文件
-    if (Test-Path -LiteralPath $full) {
-        $bdir = Join-Path $backupDir (Split-Path $rel -Parent)
-        if ($bdir -and -not (Test-Path -LiteralPath $bdir)) { New-Item -ItemType Directory -Path $bdir -Force | Out-Null }
-        Copy-Item -LiteralPath $full -Destination (Join-Path $backupDir ($rel -replace '/', '\')) -Force
-    }
-
     try {
-        Move-Item -LiteralPath $tmp -Destination $full -Force
+        # 备份失败时保留原文件，不继续替换。
+        if (Test-Path -LiteralPath $full) {
+            $bdir = Join-Path $backupDir (Split-Path $rel -Parent)
+            if ($bdir -and -not (Test-Path -LiteralPath $bdir)) {
+                New-Item -ItemType Directory -Path $bdir -Force -ErrorAction Stop | Out-Null
+            }
+            Copy-Item -LiteralPath $full -Destination (Join-Path $backupDir ($rel -replace '/', '\')) -Force -ErrorAction Stop
+        }
+        Move-Item -LiteralPath $tmp -Destination $full -Force -ErrorAction Stop
+        if ((Sha $full) -ne $want[$rel]) { throw '目标文件指纹与更新清单不符' }
         Say ('        + ' + $rel) 'Green'
         $done++
     } catch {
-        Say ('        x 替换失败（文件被占用？）  ' + $rel) 'Red'
+        Say ('        x 备份或替换失败  ' + $rel) 'Red'
         Say ('          ' + $_.Exception.Message) 'DarkGray'
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         $failed += $rel

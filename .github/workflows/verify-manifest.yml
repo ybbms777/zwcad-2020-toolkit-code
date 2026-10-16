@@ -1,0 +1,67 @@
+name: 校验更新清单
+
+# 公开仓是全体同事的更新源。version.json 里每个文件的 sha256 必须与实际内容一致，
+# 否则同事的「更新.cmd」会在那个文件上一直失败 —— 1.2.30 / 1.2.32 就是这么中招的。
+# 这里把「发布出来的东西对不对」变成每次 push 都自动查一遍。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 逐个文件核对 sha256
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, sys
+
+          root = pathlib.Path('.')
+          man = json.loads((root / 'version.json').read_text(encoding='utf-8'))
+          bad = []
+          for rel, want in man['files'].items():
+              p = root / rel
+              if not p.is_file():
+                  bad.append(f'{rel}: 文件缺失')
+                  continue
+              got = hashlib.sha256(p.read_bytes()).hexdigest()
+              if got != want:
+                  bad.append(f'{rel}: 指纹不符 {got[:12]} != {want[:12]}')
+          print(f"版本 {man['version']}，清单 {len(man['files'])} 个文件")
+          if bad:
+              print('\n'.join(bad))
+              sys.exit(1)
+          print('全部一致')
+          PY
+
+      - name: 清单里列到的文件都应存在
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+
+          root = pathlib.Path('.')
+          man = json.loads((root / 'version.json').read_text(encoding='utf-8'))
+          extra = sorted(str(p) for p in root.rglob('*')
+                         if p.is_file() and '.git/' not in str(p)
+                         and str(p) not in man['files'] and str(p) != 'version.json')
+          print('清单之外的文件:', extra if extra else '无')
+          PY
+
+      - name: 公开仓不应出现发布器 / 字体 / 图纸
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys
+
+          forbid_ext = {'.ttf', '.ttc', '.otf', '.shx', '.dwg', '.dxf', '.dwt', '.bak', '.zip'}
+          forbid_name = {'publish.ps1', '发布.cmd', 'selection.lsp'}
+          bad = [str(p) for p in pathlib.Path('.').rglob('*')
+                 if p.is_file() and '.git/' not in str(p)
+                 and (p.suffix.lower() in forbid_ext or p.name in forbid_name)]
+          print('\n'.join(bad) if bad else '干净')
+          sys.exit(1 if bad else 0)
+          PY

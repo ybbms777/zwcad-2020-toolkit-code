@@ -1,21 +1,24 @@
 {
-    "version":  "1.2.50",
-    "date":  "2026-10-16 09:28",
+    "version":  "1.2.51",
+    "date":  "2026-10-16 10:47",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "修复：示例料号统一为占位符（001）"
+                  "使用说明、更新记录和 README 改写得更直白，补齐 1.2.30 / 1.2.31 两条记录",
+                  "加 LICENSE（内部使用许可）"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
     "files":  {
                   ".gitattributes":  "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
+                  ".github/workflows/verify-manifest.yml":  "f0af53b917695909e26e53e64e6a5ad36d72144bd0575bf4a60a98653b31f66c",
                   ".gitignore":  "defca071ae35ff5e88720a29efbbef57ab3d6dec1699aece31ca21fcf7fc83a6",
                   "bin/ZWKit.Core.102.dll":  "0cbace529ce157889e236acc1320fab6e0e07ca2726925e46230ff363c21c21d",
                   "boot.lsp":  "a7044ab798cba85580ba4997aabbf4f84ca28c495232a1b8711ed3a21540e8ee",
-                  "CHANGELOG.md":  "4463c1d089172a828901abc54e5d784013e4b65df3db10381bf294919cbef543",
+                  "CHANGELOG.md":  "c52d5595edd511b24d35414ed2d5c7278421696cc05cba0b7fab65fc7cf5aa55",
                   "cli.ps1":  "94d53743f6818fb8185560ac174b4b5a8cb84aae08fcdaa42bf1b7d4fa2f0a94",
                   "install.ps1":  "30e2537a75e7af099e1739ab32dd6cc9b317d6a838d8795315ba89e213ffecea",
+                  "LICENSE":  "1e08a072cbdbd241178b70ee92ab7371408c1c006714133db1c5033dcaf032cd",
                   "modules.lsp":  "43910ea2958862672d2cf0c70d53f5676b25d0b504ab5901d02ffeccd0e6ca1f",
                   "modules/click.lsp":  "fd660e6ea9740e64d2f368ef1955aa610d5fd82719306bac8c0b5aea0f4803be",
                   "modules/dimcore.lsp":  "4496a20d00702132be373ee2fbbf0c9c6bdec439d2a00a27522c3abcc47659d8",
@@ -30,14 +33,14 @@
                   "modules/tolerance.lsp":  "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
                   "modules/trim.lsp":  "0debeb757129b86b8d24542139bf4f8a54b14ee7a6786d344c56a3722e3109ca",
                   "modules/trimext.lsp":  "b1e8c88d79970d85f47162d28e6e3a879601b982598ddd45346eb47700b9d3b5",
-                  "README.md":  "b87e27640bddb22de9973008ef3e1d4e246ee8285e04bb6480c7c03d7f2f6eee",
+                  "README.md":  "995b16d34c6f75c3d9087cadf055aa115b7117c15772ce41a273adcc2ca6e479",
                   "src/Bridge.cs":  "2f34431a432026dee8b0c0bd1b4db4e9e81b707b819595949e39c8ecb6cf6375",
                   "src/build.ps1":  "e6010db457725121bbf7caea215f45c7dfc6e970b4fec75251b01d4dad318ceb",
                   "src/Mouse.cs":  "c416fc30f2a639789247d71374149ddc8812c0db9cbfebde5bb7a68602da7a4b",
                   "update.ps1":  "c4c737bb2387bc1195359539318f2ba127ae84ecbb700054a9cc7588288780ca",
                   "更新.cmd":  "23afc10a38b73c7326b5d4bcd8c2bdb4b2feac25a287981947cdaa12de00d75a",
                   "取消自动加载.cmd":  "eea93443e0de7a8da02e859cc2759c68452881689363ae1a77844fd9d5403634",
-                  "使用说明.md":  "071ec81351fd0aa4253602bc2d21ee337098ec067f9eb58ad34f9e99152fa484",
+                  "使用说明.md":  "e750f10e03741814a91ffa2e8f39034a7f3003270d597105cfee73277f1278c2",
                   "一键安装.cmd":  "8eea6e887e556507cf0c4538cccb2d27c86aa68a92cb3eadf8453847fe9905b8"
               }
 }

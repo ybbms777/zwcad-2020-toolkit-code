@@ -12,6 +12,8 @@ on:
 
 jobs:
   verify:
+    # 只在公开仓跑：私密仓的 version.json 在「改了文件、还没发布」这段必然是旧的。
+    if: github.repository == 'ybbms777/zwcad-2020-toolkit-code'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +55,8 @@ jobs:
           PY
 
       - name: 公开仓不应出现发布器 / 字体 / 图纸
+        # 这条只对公开仓成立：私密仓本来就带发布器、字体和测试。
+        if: github.repository == 'ybbms777/zwcad-2020-toolkit-code'
         run: |
           python3 - <<'PY'
           import pathlib, sys

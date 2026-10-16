@@ -1,21 +1,20 @@
 {
-    "version":  "1.2.51",
-    "date":  "2026-10-16 10:47",
+    "version":  "1.2.52",
+    "date":  "2026-10-16 11:08",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "使用说明、更新记录和 README 改写得更直白，补齐 1.2.30 / 1.2.31 两条记录",
-                  "加 LICENSE（内部使用许可）"
+                  "内部维护：更新校验流程调整（不影响使用）"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
     "files":  {
                   ".gitattributes":  "5bb817b650feb7ce42246c4f2b9db39f1fe555c55dc73d275358b3aec024b35d",
-                  ".github/workflows/verify-manifest.yml":  "f0af53b917695909e26e53e64e6a5ad36d72144bd0575bf4a60a98653b31f66c",
+                  ".github/workflows/verify-manifest.yml":  "d16a906af50ac79fe48f88ca7b32a98e0bca0fbd4885b01c9ffa147ba0934ab7",
                   ".gitignore":  "defca071ae35ff5e88720a29efbbef57ab3d6dec1699aece31ca21fcf7fc83a6",
                   "bin/ZWKit.Core.102.dll":  "0cbace529ce157889e236acc1320fab6e0e07ca2726925e46230ff363c21c21d",
                   "boot.lsp":  "a7044ab798cba85580ba4997aabbf4f84ca28c495232a1b8711ed3a21540e8ee",
-                  "CHANGELOG.md":  "c52d5595edd511b24d35414ed2d5c7278421696cc05cba0b7fab65fc7cf5aa55",
+                  "CHANGELOG.md":  "92150dcd17a1e4bd62694124ecde03883750308af5246a52b59ebfc86b0493a6",
                   "cli.ps1":  "94d53743f6818fb8185560ac174b4b5a8cb84aae08fcdaa42bf1b7d4fa2f0a94",
                   "install.ps1":  "30e2537a75e7af099e1739ab32dd6cc9b317d6a838d8795315ba89e213ffecea",
                   "LICENSE":  "1e08a072cbdbd241178b70ee92ab7371408c1c006714133db1c5033dcaf032cd",

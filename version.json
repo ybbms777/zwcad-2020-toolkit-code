@@ -1,14 +1,10 @@
 {
-    "version":  "1.2.49",
-    "date":  "2026-10-13 11:59",
+    "version":  "1.2.50",
+    "date":  "2026-10-16 09:28",
     "fontVersion":  "2026.09.18",
     "fontsHash":  "4e8d516734391253b16d96508db5dc5fd9573cc1ca4b97f178f4682450e36747-23",
     "notes":  [
-                  "新增工艺计算器：JSQ面板、JSQP命令行、JSQN自测；按片厚、间距、步距、齿根距、齿宽输入，支持量取与写图。",
-                  "齿根距按整排两端外边计算，阵列移动距离单独显示；各尺寸可勾选上下公差，仅齿根距公差判断排齿。",
-                  "修复面板重复打开、数字校验及写图计数，修复更新替换失败和字体安装失败仍报成功的问题。",
-                  "已有安装更新后需重跑一键安装，选11全部安装，或同时勾选10工艺计算器和需要保留的模块；重启CAD后使用JSQ。",
-                  "完整包排除内部文档、测试和备份；字体版本不变。"
+                  "修复：示例料号统一为占位符（001）"
               ],
     "source":  "ybbms777/zwcad-2020-toolkit-code",
     "branch":  "main",
@@ -17,7 +13,7 @@
                   ".gitignore":  "defca071ae35ff5e88720a29efbbef57ab3d6dec1699aece31ca21fcf7fc83a6",
                   "bin/ZWKit.Core.102.dll":  "0cbace529ce157889e236acc1320fab6e0e07ca2726925e46230ff363c21c21d",
                   "boot.lsp":  "a7044ab798cba85580ba4997aabbf4f84ca28c495232a1b8711ed3a21540e8ee",
-                  "CHANGELOG.md":  "cbedbeb2f47ad3a33ef2a5c4e2cab5403691bfb250b40f0ba3359c5dc74b39af",
+                  "CHANGELOG.md":  "4463c1d089172a828901abc54e5d784013e4b65df3db10381bf294919cbef543",
                   "cli.ps1":  "94d53743f6818fb8185560ac174b4b5a8cb84aae08fcdaa42bf1b7d4fa2f0a94",
                   "install.ps1":  "30e2537a75e7af099e1739ab32dd6cc9b317d6a838d8795315ba89e213ffecea",
                   "modules.lsp":  "43910ea2958862672d2cf0c70d53f5676b25d0b504ab5901d02ffeccd0e6ca1f",
@@ -30,7 +26,7 @@
                   "modules/frame.lsp":  "db3303f6ed215df39b0ad0039854f1d89acc6965c66b35713c19a47ba3c60907",
                   "modules/proccalc.lsp":  "0f9d7cd4680b168828c1fba9205d85e8b124e9cc0057d74b857435b463eab079",
                   "modules/symbols.lsp":  "c57b9bcab8f3121bfa14879a32d417466d7903685ed3f8776851dba8f561dc0c",
-                  "modules/tkblock.lsp":  "84631c3797dfa3ed83c749b27242b079785ad8b8966626d1d810e289c0e044ac",
+                  "modules/tkblock.lsp":  "557c702e03c98ec26bb26cedf9166a8fe6b6bf19f9bbc19e952f1eba5ff5d217",
                   "modules/tolerance.lsp":  "adc6ba857bef8ba1b8effcacbe340c31dfa6c6734304116ba6b46caec7fef0fd",
                   "modules/trim.lsp":  "0debeb757129b86b8d24542139bf4f8a54b14ee7a6786d344c56a3722e3109ca",
                   "modules/trimext.lsp":  "b1e8c88d79970d85f47162d28e6e3a879601b982598ddd45346eb47700b9d3b5",
